@@ -26,12 +26,14 @@ import streamlit as st
 from lib.chart_helpers import PALETTE, fmt_int, fmt_sgd
 from lib.data_loader import (
     filter_signature, get_filtered_df, load_features,
+    render_data_source_picker,
 )
 from lib.filters import filter_summary, render_sidebar_filters
 from lib.suggestions import ACTION_LIST_LABELS, SEVERITY_BADGE, suggest_for_df
 
 st.set_page_config(page_title="Recruitment Report · MCF Insights", layout="wide")
 
+render_data_source_picker()
 df = load_features()
 filters = render_sidebar_filters(df)
 SIG = filter_signature(filters)
@@ -314,9 +316,12 @@ else:
                 mc3.metric("Median duration",
                            f"{int(row['median_duration'])} d"
                            if pd.notna(row["median_duration"]) else "—")
+                # Escape `$` — `st.caption` runs markdown which would
+                # otherwise treat S$X – S$Y as a LaTeX math block.
+                p25_md = fmt_sgd(row['p25_salary']).replace("$", "\\$")
+                p75_md = fmt_sgd(row['p75_salary']).replace("$", "\\$")
                 st.caption(
-                    f"P25–P75: {fmt_sgd(row['p25_salary'])} – {fmt_sgd(row['p75_salary'])} · "
-                    f"n={int(row['n']):,}"
+                    f"P25–P75: {p25_md} – {p75_md} · n={int(row['n']):,}"
                 )
                 st.markdown(f"**Recommendation.** {advice}")
 

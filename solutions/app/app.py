@@ -16,6 +16,7 @@ import streamlit as st
 from lib.chart_helpers import PALETTE, fmt_int, fmt_sgd
 from lib.data_loader import (
     filter_signature, get_filtered_df, load_features,
+    render_data_source_picker,
 )
 from lib.filters import filter_summary, render_sidebar_filters
 
@@ -31,6 +32,7 @@ st.caption(
     "Built on MyCareersFuture postings."
 )
 
+render_data_source_picker()
 df = load_features()
 filters = render_sidebar_filters(df)
 df_f = get_filtered_df(filter_signature(filters))
@@ -49,6 +51,8 @@ st.markdown(
 - **📋 Recruitment Report** — the operational deliverable. Promising
   roles, category recommendations, salary benchmarks, action list,
   and CSV exports.
+- **🧰 Tools** — interactive recruiter utilities. Salary benchmark
+  calculator today; more on request.
 """
 )
 

@@ -24,11 +24,13 @@ from lib.chart_helpers import (
 )
 from lib.data_loader import (
     filter_signature, get_filtered_df, load_features,
+    render_data_source_picker,
 )
 from lib.filters import filter_summary, render_sidebar_filters
 
 st.set_page_config(page_title="Overview · MCF Insights", layout="wide")
 
+render_data_source_picker()
 df = load_features()
 filters = render_sidebar_filters(df)
 df_f = get_filtered_df(filter_signature(filters))
@@ -159,31 +161,36 @@ else:
         sal, nbins=50, color_discrete_sequence=[PALETTE["primary"]],
         labels={"value": "Average salary (SGD/month, clipped at S$25k)"},
     )
+    # Distinct positions so the two pills don't overlap when p50 and p75
+    # are close. "top left" anchors the pill to the left of its line.
     fig.add_vline(
-        x=p50, line_dash="dash", line_color=PALETTE["critical"], line_width=2,
-        annotation_text=f"Median<br>S${int(p50):,}",
-        annotation_position="top",
+        x=p50, line_dash="dash", line_color=PALETTE["critical"], line_width=2.5,
+        annotation_text=f"<b>Median</b><br>S${int(p50):,}",
+        annotation_position="top left",
         annotation=annotation_style(PALETTE["critical"]),
     )
     fig.add_vline(
-        x=p75, line_dash="dot", line_color=PALETTE["warning"], line_width=2,
-        annotation_text=f"P75<br>S${int(p75):,}",
-        annotation_position="top",
+        x=p75, line_dash="dot", line_color=PALETTE["warning"], line_width=2.5,
+        annotation_text=f"<b>P75</b><br>S${int(p75):,}",
+        annotation_position="top right",
         annotation=annotation_style(PALETTE["warning"]),
     )
     fig.update_traces(hovertemplate="S$%{x}<br>%{y:,} postings<extra></extra>")
-    fig.update_layout(showlegend=False, yaxis_title="Postings", height=420,
-                      margin=dict(t=90))
+    fig.update_layout(
+        showlegend=False, yaxis_title="Postings", height=460,
+        margin=dict(t=110, l=60, r=60, b=50),
+    )
     st.plotly_chart(themed(fig), width='stretch')
     with st.expander("ℹ️ How to read this chart"):
+        # `\$` escape — Streamlit markdown otherwise treats `$X$` as LaTeX.
         st.markdown(
-            "Each bar counts how many postings fall in a S$500 salary "
+            "Each bar counts how many postings fall in a S\\$500 salary "
             "bucket. The **red dashed line** is the median; the **amber "
             "dotted line** is the 75th percentile. Bars to the right of "
-            "P75 sit in the top quartile. **Note:** salaries above S$25k "
-            "are clipped into the rightmost bar — MCF caps disclosed "
-            "salary at ~S$20k/month, so very senior roles are "
-            "right-censored and the upper tail is unreliable."
+            "P75 sit in the top quartile. **Note:** salaries above "
+            "S\\$25k are clipped into the rightmost bar — MCF caps "
+            "disclosed salary at ~S\\$20k/month, so very senior roles "
+            "are right-censored and the upper tail is unreliable."
         )
 
 st.subheader("Salary by position level")
@@ -199,15 +206,18 @@ if len(df_f) > 0 and df_f["positionLevels"].notna().any():
     fig = go.Figure()
     for lvl in pos_med.index:
         sub = df_f.loc[df_f["positionLevels"] == lvl, "average_salary"].clip(upper=30_000)
+        # Two-line name: tier + sample size. Plotly renders `<br>` cleanly
+        # in trace names; an inline `<span>` doesn't, so keep it simple.
         fig.add_trace(go.Box(
-            x=sub, name=f"{lvl}<br><span style='font-size:11px;color:#64748B'>n={counts.get(lvl, 0):,}</span>",
+            x=sub, name=f"{lvl}<br>n={counts.get(lvl, 0):,}",
             marker_color=PALETTE["primary"], boxmean=True, orientation="h",
         ))
     fig.update_layout(
         xaxis_title="Average salary (SGD/month, clipped at S$30k)",
-        yaxis_title="", showlegend=False, height=460,
-        margin=dict(l=220),
+        yaxis_title="", showlegend=False, height=520,
+        margin=dict(l=240, r=20, t=20, b=50),
     )
+    fig.update_yaxes(tickfont=dict(size=12))
     st.plotly_chart(themed(fig), width='stretch')
     with st.expander("ℹ️ How to read this chart"):
         st.markdown(

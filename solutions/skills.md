@@ -220,3 +220,6 @@ If you find yourself building these, check the dashboard spec section 12 first.
 
 Default to: simplicity over cleverness, prose explanations over jargon, direct support for the business objective ("identify promising roles and benchmark salaries").
 
+## Logging of changes
+- include changes to release.md in the commit message when you make changes to the codebase
+

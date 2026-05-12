@@ -32,11 +32,13 @@ from lib.chart_helpers import (
 )
 from lib.data_loader import (
     filter_signature, get_filtered_df, load_features,
+    render_data_source_picker,
 )
 from lib.filters import filter_summary, render_sidebar_filters
 
 st.set_page_config(page_title="Deep Analysis · MCF Insights", layout="wide")
 
+render_data_source_picker()
 df = load_features()
 filters = render_sidebar_filters(df)
 SIG = filter_signature(filters)
@@ -278,12 +280,27 @@ def _chart_21(sig: tuple) -> None:
     st.plotly_chart(themed(fig), width='stretch')
     with st.expander("ℹ️ How to read this chart"):
         st.markdown(
-            "Each cell is the **median `demand_intensity_score`** for that "
-            "category × seniority pair. **Red cells = competitive** (many "
-            "applicants per vacancy — recruiters can be selective). **Blue "
-            "cells = hard to attract** (few applicants — broaden requirements "
-            "or sweeten the offer). The score is a z-score, so 0 ≈ overall "
-            "median, |1| ≈ one standard deviation away."
+            "**What you're seeing.** Each cell is the **median "
+            "`demand_intensity_score`** for that category × seniority "
+            "pair, computed as a z-score of `applications_per_vacancy` "
+            "(0 ≈ overall median, |1| ≈ one standard deviation away, "
+            "clipped to ±5). Cell numbers are printed on the heatmap so "
+            "you don't have to estimate from colour alone.\n\n"
+            "**What 'good' looks like.** For an employer, a **mildly "
+            "positive** value (0.0–0.5) is the sweet spot: enough "
+            "applicant supply to be selective without being overwhelmed. "
+            "**Strong red (>1.0)** means the segment is saturated — good "
+            "for hiring bar quality, but JDs may be ignored if you're "
+            "underpaying. **Blue (<-0.5)** is a supply gap — applicants "
+            "are scarce and you'll struggle to fill at standard offers.\n\n"
+            "**How to act on weak segments.**\n"
+            "- **Red cells (over-competitive):** raise screening bar, "
+            "shorten time-to-decision, prioritise candidate experience.\n"
+            "- **Blue cells (under-attracted):** broaden YoE requirements, "
+            "remove non-essential 'must-haves', revise compensation up to "
+            "the 75th percentile (see §2.3), or pivot to direct sourcing.\n"
+            "- **Tiny cells (<50 postings):** treat with caution — the "
+            "median is sample-size sensitive."
         )
 
 
@@ -335,6 +352,29 @@ def _chart_22(sig: tuple) -> None:
         },
     )
     st.caption("Mass-hiring rows are excluded by default in the sidebar — toggle off to include them.")
+    with st.expander("ℹ️ How to read this table"):
+        st.markdown(
+            "**What you're seeing.** Top 20 postings ranked by "
+            "`hard_to_fill_score` — a composite of how long they've been "
+            "open, how often they've been reposted, and the inverse of "
+            "applications per vacancy. Scored as a z-score, clipped at "
+            "±5. The progress-bar column shows the relative ranking "
+            "within these 20 rows.\n\n"
+            "**What 'good' looks like.** A healthy posting sits at "
+            "**score < 0** (below market difficulty). Anything **above "
+            "+2** is materially harder than average — typically "
+            ">60 days open, multiple reposts, and <1 application per "
+            "vacancy.\n\n"
+            "**How to act on hard-to-fill roles.**\n"
+            "- **Direct sourcing** beats inbound for these — outbound "
+            "LinkedIn / referrals, not a JD repost.\n"
+            "- **Broaden the JD:** drop must-have skills you can train; "
+            "widen the YoE band; consider hybrid/remote.\n"
+            "- **Compensation review:** check §2.3 — if your offer is "
+            "in the bottom quartile of the category, raise it to median.\n"
+            "- **Recheck the title:** vague titles attract noise; "
+            "specific titles attract qualified applicants."
+        )
 
 
 def _insight_22(sig: tuple) -> str:
@@ -378,6 +418,31 @@ def _chart_23(sig: tuple) -> None:
     )
     fig.update_layout(xaxis_tickangle=-30, height=440)
     st.plotly_chart(themed(fig), width='stretch')
+    with st.expander("ℹ️ How to read this chart"):
+        st.markdown(
+            "**What you're seeing.** One box per category (top 12 by "
+            "posting count). The **box** spans P25 to P75 (the typical "
+            "range for that category); the **line inside** is the median; "
+            "**whiskers** mark ~1.5× IQR. Wider boxes = more salary "
+            "variance within the category.\n\n"
+            "**What 'good' looks like for a benchmark.** A **narrow box** "
+            "(tight IQR) means the category prices consistently — your "
+            "offer should land near the median. A **wide box** (e.g. "
+            "Information Technology spans S\\$3.5k–S\\$9k) reflects high "
+            "internal variance: junior vs senior, generalist vs niche. "
+            "Within a wide-box category, use the **🧰 Tools → Salary "
+            "benchmark calculator** to narrow by seniority + YoE.\n\n"
+            "**How to act on the chart.**\n"
+            "- **Offer below P25:** you're in the bottom quartile of the "
+            "category and likely under-attracting. Raise to at least P50 "
+            "for competitive roles.\n"
+            "- **Offer above P75:** you're top quartile — fine for senior "
+            "or hard-to-fill roles, but you may be overpaying for "
+            "generalist hires.\n"
+            "- **Salaries near S\\$20k:** remember MCF's S\\$20k ceiling "
+            "right-censors the top tail. The 'true' P75 may be higher "
+            "than shown."
+        )
 
 
 def _insight_23(sig: tuple) -> str:
@@ -385,8 +450,9 @@ def _insight_23(sig: tuple) -> str:
     if res is None:
         return "Not enough rows for salary positioning."
     cat, p25, p75 = res
+    # `\$` escape — Streamlit treats unescaped `$...$` as LaTeX math.
     return (f"Within **{cat}**, the 75th-percentile salary is "
-            f"S${p75:,.0f}. Roles paying below S${p25:,.0f} sit in the bottom quartile.")
+            f"S\\${p75:,.0f}. Roles paying below S\\${p25:,.0f} sit in the bottom quartile.")
 
 
 def _action_23(sig: tuple) -> str:
@@ -395,47 +461,18 @@ def _action_23(sig: tuple) -> str:
 
 render_analysis_section(
     title="2.3 Salary positioning",
-    problem='"Is my S$X offer competitive for a {category} {seniority} role?"',
+    problem='"Is my S\\$X offer competitive for a {category} {seniority} role?"',
     solution=("Box plot of `average_salary` by `category_1` (top 12 by count). "
               "Use the calculator below for an explicit segment benchmark."),
     chart_fn=_chart_23, insight_fn=_insight_23, action_fn=_action_23,
     sig=SIG,
 )
 
-# Salary calculator widget
-with st.container(border=True):
-    st.markdown("**Salary benchmark calculator**")
-    with st.form("salary_calc"):
-        c1, c2, c3 = st.columns(3)
-        with c1:
-            cat = st.selectbox("Category",
-                               sorted(df_f["category_1"].dropna().astype(str).unique()))
-        with c2:
-            sen_options = [s for s in
-                           ["C-suite", "Director/Head", "Manager/Lead", "Senior", "Mid/Other", "Junior"]
-                           if s in df_f["title_seniority"].astype(str).unique()]
-            sen = st.selectbox("Seniority", sen_options)
-        with c3:
-            yoe = st.slider("Years of experience", 0, 20, 3)
-        submitted = st.form_submit_button("Calculate benchmark")
-    if submitted:
-        mask = (
-            (df_f["category_1"].astype(str) == cat)
-            & (df_f["title_seniority"].astype(str) == sen)
-            & (df_f["minimumYearsExperience"] == yoe)
-        )
-        seg = df_f.loc[mask, "average_salary"].dropna()
-        if seg.empty:
-            st.info("No postings match this exact segment. Try widening the filter or seniority/YoE.")
-        else:
-            p25 = seg.quantile(0.25)
-            p50 = seg.median()
-            p75 = seg.quantile(0.75)
-            m1, m2, m3, m4 = st.columns(4)
-            m1.metric("Sample size", fmt_int(len(seg)))
-            m2.metric("P25", fmt_sgd(p25))
-            m3.metric("Median", fmt_sgd(p50))
-            m4.metric("P75", fmt_sgd(p75))
+st.info(
+    "💡 Need an exact segment benchmark? "
+    "Use the **Salary benchmark calculator** on the **🧰 Tools** page — "
+    "category × seniority × YoE → P25 / median / P75."
+)
 
 
 # ─── 2.4 Engagement funnel ───────────────────────────────────────────────
@@ -471,13 +508,28 @@ def _chart_24(sig: tuple) -> None:
         st.caption(f"Sampled 5,000 of {full_n:,} rows for chart performance.")
     with st.expander("ℹ️ How to read this chart"):
         st.markdown(
-            "Each dot is one posting. **X-axis** = total views, **Y-axis** "
-            "= total applications. **Red dots** convert *below* their "
-            "category's median (`apps_per_view` lower than peers); **blue "
-            "dots** convert *above*. Look for **red dots far to the right** "
-            "with low Y — postings that pulled traffic but failed to "
-            "convert. Those are JD-quality or fit problems, not visibility "
-            "problems."
+            "**What you're seeing.** Each dot is one posting (sampled to "
+            "5,000 if the filter set is larger). **X-axis** = total views, "
+            "**Y-axis** = total applications. Colour is "
+            "`apps_per_view_vs_category_median`: **red = converts below** "
+            "category norm, **blue = converts above**. The diagonal "
+            "(implicit) is the category-median conversion rate.\n\n"
+            "**What 'good' looks like.** A healthy posting sits **on or "
+            "above** the implicit diagonal in **blue**: traffic translates "
+            "into applications at-or-above the peer rate. The worst "
+            "quadrant is **bottom-right red** — high views (you're "
+            "visible) but very low applications and well below peer "
+            "conversion (something about the JD turns candidates away).\n\n"
+            "**How to act on bottom-right reds.**\n"
+            "- **Audit the JD copy** for ambiguity, jargon, "
+            "buried-must-haves, or unrealistic stack mixes.\n"
+            "- **Title clarity:** vague titles (e.g. 'Software Engineer') "
+            "attract clicks but not commitment. Specific titles ('Senior "
+            "Java Backend Engineer — Insurance') self-filter.\n"
+            "- **Compensation transparency:** undisclosed-salary postings "
+            "convert worse on average. Show a range.\n"
+            "- **Remove unrealistic requirements:** '8+ YoE for a senior "
+            "role paying S\\$5k' is a common dealbreaker."
         )
 
 
@@ -515,6 +567,28 @@ def _chart_25(sig: tuple) -> None:
             "Conv. rate": st.column_config.NumberColumn(format="%.3f"),
         },
     )
+    with st.expander("ℹ️ How to read this table"):
+        st.markdown(
+            "**What you're seeing.** Postings where `hidden_gem_flag` is "
+            "true — bottom 25% of views *and* top 25% of conversion "
+            "(`applications_per_view`). Sorted by conversion rate so the "
+            "best examples sit at the top.\n\n"
+            "**What 'good' looks like.** A genuine hidden gem has **low "
+            "views (often <30)** but **very high conversion (>0.1, i.e. "
+            "more than 1 in 10 viewers applies)**. That signals a "
+            "well-targeted JD: it doesn't draw a crowd, but the people "
+            "who do see it find it relevant enough to commit.\n\n"
+            "**How to learn from these.**\n"
+            "- **Study the JD copy:** what's specific? Tone, "
+            "tech-stack precision, salary visibility, mission framing.\n"
+            "- **Replicate the title pattern:** hidden-gem titles tend to "
+            "be **specific** rather than generic.\n"
+            "- **Caveat — small sample noise:** a posting with 5 views "
+            "and 2 applications looks great but is statistically thin. "
+            "Filter for ≥10 views before drawing strong conclusions.\n"
+            "- **Don't mass-replicate:** the formula works because the "
+            "audience is niche. Scaling it usually dilutes the targeting."
+        )
 
 
 def _insight_25(sig: tuple) -> str:
@@ -579,6 +653,35 @@ def _chart_26(sig: tuple) -> None:
 
     fig.update_layout(height=540, barmode="group")
     st.plotly_chart(themed(fig), width='stretch')
+    with st.expander("ℹ️ How to read this chart"):
+        st.markdown(
+            "**What you're seeing.** Four side-by-side comparisons of "
+            "**Direct employers** (blue) vs **Agencies** (orange), drawn "
+            "from a 30k stratified sample of the filtered set so box "
+            "plots render quickly. Top row: salary distribution and "
+            "conversion rate (`applications_per_view`). Bottom row: "
+            "posting duration in days, and seniority mix.\n\n"
+            "**What 'good' looks like (or rather, what you want to "
+            "spot).**\n"
+            "- **Salary panel:** in a well-mixed market, agency and "
+            "direct medians should be **within a few hundred dollars** "
+            "of each other for comparable roles. A big agency premium or "
+            "discount usually reflects *role mix*, not pure pay "
+            "compression.\n"
+            "- **Conversion panel:** direct employers typically convert "
+            "**higher** (candidates trust the end-employer more than a "
+            "recruiter intermediary). A reversal is a yellow flag.\n"
+            "- **Duration panel:** agencies often **repost faster** to "
+            "stay visible — shorter median duration is expected.\n"
+            "- **Seniority mix:** agencies skew toward **mid-level**; "
+            "C-suite and Director/Head roles are mostly direct-hired.\n\n"
+            "**How to use this when benchmarking.**\n"
+            "- **Always split by `is_agency`** before comparing salaries "
+            "category-on-category. The sidebar 'Employer type' radio "
+            "does this with one click.\n"
+            "- **For your own benchmark targets**, prefer **Direct only** "
+            "— it removes the agency repost/re-list noise."
+        )
 
 
 def _insight_26(sig: tuple) -> str:
@@ -586,7 +689,8 @@ def _insight_26(sig: tuple) -> str:
     pct = s["agency_share"]
     med_dir, med_ag = s["median_direct"], s["median_agency"]
     if pd.notna(med_dir) and pd.notna(med_ag):
-        diff_text = fmt_sgd(med_ag - med_dir)
+        # Escape the `$` — Streamlit markdown otherwise treats `$X$` as math.
+        diff_text = fmt_sgd(med_ag - med_dir).replace("$", "\\$")
     else:
         diff_text = "—"
     return f"Agencies post **{pct:.1%}** of roles. Median salary difference: **{diff_text}**."
