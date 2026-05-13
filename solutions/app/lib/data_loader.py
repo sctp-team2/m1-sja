@@ -242,10 +242,10 @@ def render_data_source_picker() -> None:
     sb.markdown("### Data source")
 
     # ── Option B: load from URL (editable, pre-filled with sample) ──
-    st.session_state.setdefault("data_source_url", SAMPLE_DATA_URL)
     with sb.expander("🌐 Load from URL", expanded=True):
-        st.text_input(
+        url = st.text_input(
             "Source URL",
+            value=SAMPLE_DATA_URL,
             key="data_source_url",
             help=(
                 "Google Drive shareable URLs are auto-detected by file ID. "
@@ -253,9 +253,9 @@ def render_data_source_picker() -> None:
                 "your own dataset."
             ),
         )
-        if st.button("Load from URL", width="stretch", type="primary"):
+        if st.button("Load from URL", use_container_width=True, type="primary"):
             try:
-                content, name = _fetch_url(st.session_state["data_source_url"])
+                content, name = _fetch_url(url)
                 _set_session_upload(content, name)
                 # Clear the local-file uploader so its 'None' on the next
                 # rerun doesn't fight with the URL-installed upload.
@@ -287,7 +287,7 @@ def render_data_source_picker() -> None:
                 f"Using **{active['name']}** — {len(df):,} rows × {df.shape[1]} cols",
                 icon="📂",
             )
-            if sb.button("Revert to bundled file", width="stretch"):
+            if sb.button("Revert to bundled file", use_container_width=True):
                 st.session_state.pop("uploaded_file", None)
                 st.session_state.pop("data_source_uploader", None)
                 st.rerun()

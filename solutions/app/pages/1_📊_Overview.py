@@ -84,7 +84,7 @@ with c_left:
         df_f["category_1"].value_counts().head(15).sort_values(ascending=True)
     )
     if cat_counts.empty:
-        st.plotly_chart(empty_chart(), width='stretch')
+        st.plotly_chart(empty_chart(), use_container_width=True)
     else:
         fig = px.bar(
             x=cat_counts.values, y=cat_counts.index.astype(str),
@@ -94,7 +94,7 @@ with c_left:
         )
         fig.update_traces(hovertemplate="%{y}<br>%{x:,} postings<extra></extra>")
         fig.update_layout(height=480, margin=dict(l=180))
-        st.plotly_chart(themed(fig), width='stretch')
+        st.plotly_chart(themed(fig), use_container_width=True)
         with st.expander("ℹ️ How to read this chart"):
             st.markdown(
                 "**Bars** show the top 15 MCF job categories by raw posting "
@@ -118,7 +118,7 @@ with c_right:
         .sort_values("postings", ascending=True)
     )
     if co.empty:
-        st.plotly_chart(empty_chart(), width='stretch')
+        st.plotly_chart(empty_chart(), use_container_width=True)
     else:
         co["employer_type"] = co["is_agency"].map(
             {True: "Agency", False: "Direct"}
@@ -132,7 +132,7 @@ with c_right:
         )
         fig.update_traces(hovertemplate="%{y}<br>%{x:,} postings<extra></extra>")
         fig.update_layout(height=480, margin=dict(l=200))
-        st.plotly_chart(themed(fig), width='stretch')
+        st.plotly_chart(themed(fig), use_container_width=True)
         with st.expander("ℹ️ How to read this chart"):
             st.markdown(
                 "**Bars** show the 15 companies with the most postings. "
@@ -153,7 +153,7 @@ sal = df_f["average_salary"].clip(upper=25_000)
 sal = sal[sal.notna()]
 
 if sal.empty:
-    st.plotly_chart(empty_chart(), width='stretch')
+    st.plotly_chart(empty_chart(), use_container_width=True)
 else:
     p50 = sal.median()
     p75 = sal.quantile(0.75)
@@ -180,7 +180,7 @@ else:
         showlegend=False, yaxis_title="Postings", height=460,
         margin=dict(t=110, l=60, r=60, b=50),
     )
-    st.plotly_chart(themed(fig), width='stretch')
+    st.plotly_chart(themed(fig), use_container_width=True)
     with st.expander("ℹ️ How to read this chart"):
         # `\$` escape — Streamlit markdown otherwise treats `$X$` as LaTeX.
         st.markdown(
@@ -218,7 +218,7 @@ if len(df_f) > 0 and df_f["positionLevels"].notna().any():
         margin=dict(l=240, r=20, t=20, b=50),
     )
     fig.update_yaxes(tickfont=dict(size=12))
-    st.plotly_chart(themed(fig), width='stretch')
+    st.plotly_chart(themed(fig), use_container_width=True)
     with st.expander("ℹ️ How to read this chart"):
         st.markdown(
             "Each row is a `positionLevels` tier, ordered by median pay. "
@@ -239,7 +239,7 @@ with d_left:
     st.subheader("Employment type mix")
     et = df_f["employmentTypes"].astype(str).value_counts().head(10)
     if et.empty:
-        st.plotly_chart(empty_chart(), width='stretch')
+        st.plotly_chart(empty_chart(), use_container_width=True)
     else:
         fig = px.pie(values=et.values, names=et.index, hole=0.5,
                      color_discrete_sequence=px.colors.sequential.Blues_r)
@@ -253,7 +253,7 @@ with d_left:
         )
         fig.update_layout(showlegend=False, height=380,
                           margin=dict(l=20, r=20, t=20, b=20))
-        st.plotly_chart(themed(fig), width='stretch')
+        st.plotly_chart(themed(fig), use_container_width=True)
         with st.expander("ℹ️ How to read this chart"):
             st.markdown(
                 "Slice size = share of postings with each "
@@ -269,7 +269,7 @@ with d_right:
     sen = df_f["title_seniority"].astype(str).value_counts()
     sen = sen.reindex([s for s in sen_order if s in sen.index])
     if sen.empty:
-        st.plotly_chart(empty_chart(), width='stretch')
+        st.plotly_chart(empty_chart(), use_container_width=True)
     else:
         fig = px.pie(values=sen.values, names=sen.index, hole=0.5,
                      color_discrete_sequence=px.colors.sequential.Viridis_r)
@@ -283,7 +283,7 @@ with d_right:
         )
         fig.update_layout(showlegend=False, height=380,
                           margin=dict(l=20, r=20, t=20, b=20))
-        st.plotly_chart(themed(fig), width='stretch')
+        st.plotly_chart(themed(fig), use_container_width=True)
         with st.expander("ℹ️ How to read this chart"):
             st.markdown(
                 "Slice size = share of postings whose **title** signals "
