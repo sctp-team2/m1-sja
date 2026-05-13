@@ -161,7 +161,14 @@ def load_features_or_stop() -> pd.DataFrame:
 
 
 def _set_session_upload(content: bytes, name: str) -> None:
-    """Store an upload in session_state with a hash for cache discrimination."""
+    """Store an upload in session_state with a hash for cache discrimination.
+
+    When the hash changes (genuine new upload, not a re-render of the
+    same file), drop every @st.cache_data entry so old per-page
+    aggregations and the previous source frame are released. The
+    DuckDB connection (cache_resource) survives — its `features` view
+    is re-registered to the new frame on the next _query_duckdb call.
+    """
     digest = hashlib.sha1(content).hexdigest()[:8]
     existing = st.session_state.get("uploaded_file")
     if not existing or existing["hash"] != digest:
@@ -170,6 +177,7 @@ def _set_session_upload(content: bytes, name: str) -> None:
             "name": name,
             "hash": digest,
         }
+        st.cache_data.clear()
 
 
 def _active_source_size_bytes() -> int | None:
@@ -288,6 +296,7 @@ def render_data_source_picker() -> None:
             if sb.button("Revert to bundled file", width="stretch"):
                 st.session_state.pop("uploaded_file", None)
                 st.session_state.pop("data_source_uploader", None)
+                st.cache_data.clear()
                 st.rerun()
         except Exception as e:
             sb.error(f"Could not load active dataset: {e}")
@@ -441,6 +450,9 @@ def _query_duckdb(_con: duckdb.DuckDBPyConnection, sig: tuple) -> pd.DataFrame:
     unlock predicate pushdown without the bridge.
     """
     df = load_features()
+    # register() is REPLACE semantics — re-binding "features" to the
+    # current frame each call ensures DuckDB sees the active upload,
+    # never a stale one from a previous file.
     _con.register("features", df)
     where_sql, params = _build_duckdb_where(_from_signature(sig))
     sql = f"SELECT * FROM features{where_sql}"
