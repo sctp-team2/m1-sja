@@ -16,21 +16,17 @@ import streamlit as st
 from lib.chart_helpers import PALETTE, fmt_int, fmt_sgd
 from lib.data_loader import (
     engine_badge, filter_signature, get_filtered_df, load_features,
-    render_data_source_picker, render_data_status, render_execution_mode_toggle,
 )
 from lib.filters import filter_summary, render_sidebar_filters
 
 st.set_page_config(page_title="Tools · HR Recruiter Insights", layout="wide")
 
-render_data_source_picker()
-render_execution_mode_toggle()
 df = load_features()
 filters = render_sidebar_filters(df)
 SIG = filter_signature(filters)
 df_f = get_filtered_df(SIG)
 st.sidebar.markdown("---")
 st.sidebar.markdown(filter_summary(filters, df_f, df))
-render_data_status()
 
 st.title("Tools")
 st.caption(

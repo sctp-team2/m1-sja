@@ -24,20 +24,16 @@ from lib.chart_helpers import (
 )
 from lib.data_loader import (
     engine_badge, filter_signature, get_filtered_df, load_features_or_stop,
-    render_data_source_picker, render_data_status, render_execution_mode_toggle,
 )
 from lib.filters import filter_summary, render_sidebar_filters
 
 st.set_page_config(page_title="Overview · HR Recruiter Insights", layout="wide")
 
-render_data_source_picker()
-render_execution_mode_toggle()
 df = load_features_or_stop()
 filters = render_sidebar_filters(df)
 df_f = get_filtered_df(filter_signature(filters))
 st.sidebar.markdown("---")
 st.sidebar.markdown(filter_summary(filters, df_f, df))
-render_data_status()
 
 st.title("Singapore Job Market Overview")
 if len(df_f):

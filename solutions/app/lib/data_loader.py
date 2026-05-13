@@ -151,9 +151,11 @@ def load_features_or_stop() -> pd.DataFrame:
         return load_features()
     except FileNotFoundError:
         st.info(
-            "📂 No dataset loaded yet. Use **🌐 Load from URL** "
-            "or upload a file in the sidebar to get started."
+            "📂 No dataset loaded yet. Open the **⚙️ Setup** page "
+            "(left sidebar nav) to upload one."
         )
+        if st.button("Go to ⚙️ Setup"):
+            st.switch_page("pages/0_⚙️_Setup.py")
         st.stop()
     except ValueError as e:
         st.error(f"📂 {e}")
@@ -196,7 +198,7 @@ def engine_badge() -> str:
 
 
 def render_data_status() -> None:
-    """Sidebar diagnostics: where is the data right now?
+    """Diagnostics block for the Setup page main panel.
 
     Surfaces the three orthogonal pieces of state a user might wonder
     about: which source file is active, whether the pandas frame is
@@ -205,8 +207,7 @@ def render_data_status() -> None:
     is always read into pandas first; DuckDB sees a zero-copy view of
     that same frame (current bridge build).
     """
-    sb = st.sidebar
-    with sb.expander("Data status", expanded=False):
+    with st.expander("Data status", expanded=True):
         # Source
         upload = st.session_state.get("uploaded_file")
         size = _active_source_size_bytes()
@@ -253,20 +254,15 @@ def render_data_status() -> None:
 
 
 def render_execution_mode_toggle() -> None:
-    """Sidebar widget pair: DuckDB/pandas toggle + clear-cache button.
+    """Setup-page widget: DuckDB/pandas toggle + clear-cache button.
 
-    Place at the very top of the sidebar on every page so it sits above
-    the data-source picker and filters. Mode persists in
-    `st.session_state["use_duckdb"]` and is folded into the cache key
-    by `filter_signature`, so each mode keeps its own cached results.
-
-    A 500 MB pandas-mode warning fires when the active source exceeds
-    the threshold and the toggle is OFF — nudges the user toward
-    DuckDB without forcing a switch.
+    Mode persists in `st.session_state["use_duckdb"]` and is folded
+    into the cache key by `filter_signature`, so each mode keeps its
+    own cached results. A 500 MB pandas-mode warning fires when the
+    active source exceeds the threshold and the toggle is OFF.
     """
-    sb = st.sidebar
-    sb.markdown("### Execution mode")
-    sb.checkbox(
+    st.markdown("### Execution mode")
+    st.checkbox(
         "Load into DuckDB",
         key="use_duckdb",
         help=(
@@ -276,13 +272,13 @@ def render_execution_mode_toggle() -> None:
         ),
     )
     if st.session_state.get("use_duckdb", False):
-        sb.caption(
+        st.caption(
             "**DuckDB mode** · SQL engine on the loaded frame. "
             "Pickle source is bridged through pandas — switch to .parquet "
             "for true predicate pushdown."
         )
     else:
-        sb.caption(
+        st.caption(
             "**Pandas mode** · simpler, holds the full dataset in memory. "
             "Toggle on for DuckDB SQL semantics."
         )
@@ -294,40 +290,36 @@ def render_execution_mode_toggle() -> None:
         and size is not None
         and size > _PANDAS_MODE_WARN_BYTES
     ):
-        sb.warning(
+        st.warning(
             f"Active source is {size / (1024**2):.0f} MB — over the "
             f"{_PANDAS_MODE_WARN_BYTES // (1024**2)} MB pandas-mode "
             "threshold. Consider toggling **Load into DuckDB**.",
             icon="⚠️",
         )
 
-    if sb.button("Clear cache", width="stretch", help="Clears @st.cache_data; mode toggle is preserved."):
+    if st.button("Clear cache", help="Clears @st.cache_data; mode toggle is preserved."):
         st.cache_data.clear()
         st.toast("Cache cleared.", icon="🧹")
 
 
 def render_data_source_picker() -> None:
-    """Sidebar widget for swapping the active data source.
-
-    Place this above `render_sidebar_filters` on every page so changing
-    the source refreshes the filters' option lists.
+    """Setup-page widget for swapping the active data source.
 
     Two paths to a dataset:
-      1. Bundled `data/m1-eda-clean-v1.pkl` (the default; used when nothing
-         else is loaded — only present when running locally).
+      1. Bundled `data/m1-eda-clean-v1.pkl` (the default; used when
+         nothing else is loaded — only present when running locally).
       2. Download the sample pkl from Google Drive (link below), then
          upload it back via `st.file_uploader` (.pkl / .csv / .parquet).
     """
-    sb = st.sidebar
-    sb.markdown("### Data source")
+    st.markdown("### Data source")
 
-    sb.markdown(
+    st.markdown(
         f"**Step 1.** [⬇️ Download sample dataset]({SAMPLE_DATA_DRIVE_URL}) "
         "from Google Drive (~220 MB)."
     )
-    sb.markdown("**Step 2.** Upload the downloaded file below:")
+    st.markdown("**Step 2.** Upload the downloaded file below:")
 
-    uploaded = sb.file_uploader(
+    uploaded = st.file_uploader(
         "Upload .pkl / .csv / .parquet",
         type=["pkl", "pickle", "csv", "parquet"],
         help=(
@@ -341,27 +333,27 @@ def render_data_source_picker() -> None:
     if uploaded is not None:
         _set_session_upload(uploaded.getvalue(), uploaded.name)
 
-    # ── Status caption + clear button ────────────────────────────────
+    # ── Status caption + revert button ───────────────────────────────
     active = st.session_state.get("uploaded_file")
     if active is not None:
         try:
             df = load_features()
-            sb.success(
+            st.success(
                 f"Using **{active['name']}** — {len(df):,} rows × {df.shape[1]} cols",
                 icon="📂",
             )
-            if sb.button("Revert to bundled file", width="stretch"):
+            if st.button("Revert to bundled file"):
                 st.session_state.pop("uploaded_file", None)
                 st.session_state.pop("data_source_uploader", None)
                 st.cache_data.clear()
                 st.rerun()
         except Exception as e:
-            sb.error(f"Could not load active dataset: {e}")
+            st.error(f"Could not load active dataset: {e}")
             st.session_state.pop("uploaded_file", None)
     else:
-        sb.caption(
+        st.caption(
             "Using bundled `data/m1-eda-clean-v1.pkl`. "
-            "Click *Load from URL* or upload a file to override."
+            "Upload a file above to override."
         )
 
 
