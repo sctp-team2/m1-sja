@@ -1,3 +1,11 @@
 [server]
 # Bump from the 200 MB default — the sample mcf_features.pkl is ~226 MB.
 maxUploadSize = 500
+# Streamlit Cloud's inotify instance budget can't cover this tree once
+# the 226 MB pickles land in /tmp — switch to polling to silence the
+# "inotify instance limit reached" spam. Source-file edits still trigger
+# reloads, just on a poll interval.
+fileWatcherType = "poll"
+
+[browser]
+gatherUsageStats = false
