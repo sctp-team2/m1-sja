@@ -42,9 +42,15 @@ if str(_REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(_REPO_ROOT))
 
 
-# Columns that prove an input is already feature-engineered. If any of
-# these appear in the upload, skip `build_features`.
-_FEATURE_MARKERS = ("hard_to_fill_score", "salary_band", "demand_intensity_score")
+# Feature columns the app actually reads. Used to detect a complete
+# feature frame; an upload missing any of these is rebuilt or rejected.
+_REQUIRED_FEATURE_COLS = (
+    "is_agency", "salary_band", "hard_to_fill_score",
+    "demand_intensity_score", "title_seniority",
+    "zero_engagement_flag", "mass_hiring_flag",
+    "salary_suspicious_low", "average_salary", "category_1",
+    "metadata_originalPostingDate", "minimumYearsExperience",
+)
 
 # Minimum raw columns required to run `build_features` on an upload.
 _RAW_REQUIRED = (
@@ -71,20 +77,23 @@ def _parse_upload(content: bytes, name: str) -> pd.DataFrame:
 
 
 def _ensure_features(df: pd.DataFrame) -> pd.DataFrame:
-    """If `df` is already feature-engineered, return as-is. Else run
-    `build_features` on it. Raises if the schema fits neither shape."""
-    if any(col in df.columns for col in _FEATURE_MARKERS):
+    """Return a fully-featured frame. If `df` already has every column
+    the app needs, return as-is. If it has the raw schema, rebuild
+    features. Otherwise raise with the specific gap."""
+    missing_features = [c for c in _REQUIRED_FEATURE_COLS if c not in df.columns]
+    if not missing_features:
         return df
-    missing = [c for c in _RAW_REQUIRED if c not in df.columns]
-    if missing:
-        raise ValueError(
-            "Uploaded file is neither a feature frame nor a recognised raw "
-            "MCF schema. Missing required raw columns: "
-            + ", ".join(missing[:6])
-            + (f" (+{len(missing) - 6} more)" if len(missing) > 6 else "")
-        )
-    from feature_engineering import build_features  # imported lazily
-    return build_features(df)
+    missing_raw = [c for c in _RAW_REQUIRED if c not in df.columns]
+    if not missing_raw:
+        from feature_engineering import build_features  # imported lazily
+        return build_features(df)
+    raise ValueError(
+        "Uploaded data is incomplete. Missing "
+        f"{len(missing_features)} feature column(s) including: "
+        + ", ".join(missing_features[:5])
+        + ". Re-export from a current `feature_engineering.build_features` "
+        "run, or upload the raw 21-column MCF extract instead."
+    )
 
 
 @st.cache_data(show_spinner="Loading default feature data…")
@@ -210,6 +219,23 @@ def load_features() -> pd.DataFrame:
     if upload is not None:
         return _load_upload(upload["content"], upload["name"])
     return _load_default()
+
+
+def load_features_or_stop() -> pd.DataFrame:
+    """Like `load_features`, but on Streamlit Cloud (or any host where the
+    bundled pkl is absent) show a friendly prompt and halt the page render
+    instead of crashing with a traceback."""
+    try:
+        return load_features()
+    except FileNotFoundError:
+        st.info(
+            "📂 No dataset loaded yet. Use **🌐 Load from URL** "
+            "or upload a file in the sidebar to get started."
+        )
+        st.stop()
+    except ValueError as e:
+        st.error(f"📂 {e}")
+        st.stop()
 
 
 def _set_session_upload(content: bytes, name: str) -> None:

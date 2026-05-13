@@ -23,7 +23,7 @@ from lib.chart_helpers import (
     fmt_sgd, themed,
 )
 from lib.data_loader import (
-    filter_signature, get_filtered_df, load_features,
+    filter_signature, get_filtered_df, load_features_or_stop,
     render_data_source_picker,
 )
 from lib.filters import filter_summary, render_sidebar_filters
@@ -31,7 +31,7 @@ from lib.filters import filter_summary, render_sidebar_filters
 st.set_page_config(page_title="Overview · MCF Insights", layout="wide")
 
 render_data_source_picker()
-df = load_features()
+df = load_features_or_stop()
 filters = render_sidebar_filters(df)
 df_f = get_filtered_df(filter_signature(filters))
 st.sidebar.markdown("---")

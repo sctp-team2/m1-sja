@@ -15,7 +15,7 @@ import streamlit as st
 
 from lib.chart_helpers import PALETTE, fmt_int, fmt_sgd
 from lib.data_loader import (
-    filter_signature, get_filtered_df, load_features,
+    filter_signature, get_filtered_df, load_features_or_stop,
     render_data_source_picker,
 )
 from lib.filters import filter_summary, render_sidebar_filters
@@ -33,7 +33,7 @@ st.caption(
 )
 
 render_data_source_picker()
-df = load_features()
+df = load_features_or_stop()
 filters = render_sidebar_filters(df)
 df_f = get_filtered_df(filter_signature(filters))
 
