@@ -22,8 +22,8 @@ from lib.filters import filter_summary, render_sidebar_filters
 
 st.set_page_config(page_title="Tools · HR Recruiter Insights", layout="wide")
 
-render_execution_mode_toggle()
 render_data_source_picker()
+render_execution_mode_toggle()
 df = load_features()
 filters = render_sidebar_filters(df)
 SIG = filter_signature(filters)

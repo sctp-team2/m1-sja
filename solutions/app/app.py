@@ -32,8 +32,8 @@ st.caption(
     f"Built on MyCareersFuture postings. · Engine: **{engine_badge()}**"
 )
 
-render_execution_mode_toggle()
 render_data_source_picker()
+render_execution_mode_toggle()
 df = load_features_or_stop()
 filters = render_sidebar_filters(df)
 df_f = get_filtered_df(filter_signature(filters))

@@ -33,8 +33,8 @@ from lib.suggestions import ACTION_LIST_LABELS, SEVERITY_BADGE, suggest_for_df
 
 st.set_page_config(page_title="Recruitment Report · HR Recruiter Insights", layout="wide")
 
-render_execution_mode_toggle()
 render_data_source_picker()
+render_execution_mode_toggle()
 df = load_features_or_stop()
 filters = render_sidebar_filters(df)
 SIG = filter_signature(filters)

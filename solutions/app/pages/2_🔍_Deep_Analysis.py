@@ -38,8 +38,8 @@ from lib.filters import filter_summary, render_sidebar_filters
 
 st.set_page_config(page_title="Deep Analysis · HR Recruiter Insights", layout="wide")
 
-render_execution_mode_toggle()
 render_data_source_picker()
+render_execution_mode_toggle()
 df = load_features_or_stop()
 filters = render_sidebar_filters(df)
 SIG = filter_signature(filters)

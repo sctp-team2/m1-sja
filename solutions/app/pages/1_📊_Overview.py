@@ -30,8 +30,8 @@ from lib.filters import filter_summary, render_sidebar_filters
 
 st.set_page_config(page_title="Overview · HR Recruiter Insights", layout="wide")
 
-render_execution_mode_toggle()
 render_data_source_picker()
+render_execution_mode_toggle()
 df = load_features_or_stop()
 filters = render_sidebar_filters(df)
 df_f = get_filtered_df(filter_signature(filters))
