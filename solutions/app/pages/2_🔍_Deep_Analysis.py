@@ -31,13 +31,14 @@ from lib.chart_helpers import (
     fmt_sgd, themed,
 )
 from lib.data_loader import (
-    filter_signature, get_filtered_df, load_features_or_stop,
-    render_data_source_picker,
+    engine_badge, filter_signature, get_filtered_df, load_features_or_stop,
+    render_data_source_picker, render_execution_mode_toggle,
 )
 from lib.filters import filter_summary, render_sidebar_filters
 
 st.set_page_config(page_title="Deep Analysis · HR Recruiter Insights", layout="wide")
 
+render_execution_mode_toggle()
 render_data_source_picker()
 df = load_features_or_stop()
 filters = render_sidebar_filters(df)
@@ -214,7 +215,7 @@ def _agency_vs_direct_sample(sig: tuple) -> pd.DataFrame:
 st.title("Deep Analysis")
 st.caption(
     "Problem → Solution → Chart → Insight → Action. Insight and Action "
-    "lines update with your filters."
+    f"lines update with your filters. · Engine: **{engine_badge()}**"
 )
 
 if df_f.empty:

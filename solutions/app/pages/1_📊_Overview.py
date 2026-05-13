@@ -23,13 +23,14 @@ from lib.chart_helpers import (
     fmt_sgd, themed,
 )
 from lib.data_loader import (
-    filter_signature, get_filtered_df, load_features_or_stop,
-    render_data_source_picker,
+    engine_badge, filter_signature, get_filtered_df, load_features_or_stop,
+    render_data_source_picker, render_execution_mode_toggle,
 )
 from lib.filters import filter_summary, render_sidebar_filters
 
 st.set_page_config(page_title="Overview · HR Recruiter Insights", layout="wide")
 
+render_execution_mode_toggle()
 render_data_source_picker()
 df = load_features_or_stop()
 filters = render_sidebar_filters(df)
@@ -41,7 +42,10 @@ st.title("Singapore Job Market Overview")
 if len(df_f):
     d_min = df_f["metadata_originalPostingDate"].min().date()
     d_max = df_f["metadata_originalPostingDate"].max().date()
-    st.caption(f"Showing **{len(df_f):,}** postings from **{d_min}** to **{d_max}**.")
+    st.caption(
+        f"Showing **{len(df_f):,}** postings from **{d_min}** to **{d_max}**. "
+        f"· Engine: **{engine_badge()}**"
+    )
 else:
     st.warning("No postings match current filters. Reset filters in the sidebar.")
     st.stop()

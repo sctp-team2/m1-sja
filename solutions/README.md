@@ -109,6 +109,27 @@ Every chart has an `ℹ️ How to read this chart` expander, collapsed by
 default — click to reveal a plain-English explanation of what the
 visual is showing and how to use it.
 
+## Execution modes (v2)
+
+The sidebar exposes a **Load into DuckDB** toggle that picks the
+filter engine. Both modes return DataFrames with identical columns and
+dtypes, so every page renders the same way regardless of which is
+active. The current engine is shown in the caption under each page
+title (e.g. *Engine: pandas*).
+
+| Mode | When to use | Trade-off |
+| --- | --- | --- |
+| **Pandas** (default) | Anything that fits in memory; the simplest path. | Reads the full pickle on first load. Warns at 500 MB on disk. |
+| **DuckDB** | When you want SQL semantics or vectorised filtering on large frames. | Bridge mode: pickle is loaded into pandas, then registered as a DuckDB view. DuckDB cannot read `.pkl` natively — to skip the pandas load entirely, supply a `.parquet` instead. |
+
+Other v2 sidebar additions:
+
+- **Clear cache** button — drops `@st.cache_data` entries (mode toggle is preserved).
+- The DuckDB connection is `@st.cache_resource` so the same in-memory
+  database is reused across reruns and across both modes.
+- The cache key includes the active mode, so each path keeps its own
+  results — toggling does not invalidate either side.
+
 ## Shared filters
 
 The sidebar persists across all pages. Filters write to

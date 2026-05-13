@@ -15,13 +15,14 @@ import streamlit as st
 
 from lib.chart_helpers import PALETTE, fmt_int, fmt_sgd
 from lib.data_loader import (
-    filter_signature, get_filtered_df, load_features,
-    render_data_source_picker,
+    engine_badge, filter_signature, get_filtered_df, load_features,
+    render_data_source_picker, render_execution_mode_toggle,
 )
 from lib.filters import filter_summary, render_sidebar_filters
 
 st.set_page_config(page_title="Tools · HR Recruiter Insights", layout="wide")
 
+render_execution_mode_toggle()
 render_data_source_picker()
 df = load_features()
 filters = render_sidebar_filters(df)
@@ -34,7 +35,7 @@ st.title("Tools")
 st.caption(
     "Interactive recruiter utilities. Sidebar filters constrain the "
     "underlying market data the tools draw from — narrow them to focus "
-    "on a segment, or leave wide for an all-market benchmark."
+    f"on a segment, or leave wide for an all-market benchmark. · Engine: **{engine_badge()}**"
 )
 
 if df_f.empty:

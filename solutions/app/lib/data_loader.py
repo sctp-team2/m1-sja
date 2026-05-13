@@ -18,8 +18,12 @@ import io
 import sys
 from pathlib import Path
 
+import duckdb
 import pandas as pd
 import streamlit as st
+
+# Pandas-mode disk-size threshold for the "consider DuckDB" warning.
+_PANDAS_MODE_WARN_BYTES = 500 * 1024 * 1024  # 500 MB per upgrade-v2.md spec
 
 # solutions/data/m1-eda-clean-v1.pkl relative to this file
 DATA_PATH = Path(__file__).resolve().parents[2] / "data" / "m1-eda-clean-v1.pkl"
@@ -168,6 +172,75 @@ def _set_session_upload(content: bytes, name: str) -> None:
         }
 
 
+def _active_source_size_bytes() -> int | None:
+    """Disk size of the active source, in bytes. None when unknown."""
+    upload = st.session_state.get("uploaded_file")
+    if upload is not None:
+        return len(upload["content"])
+    if DATA_PATH.exists():
+        return DATA_PATH.stat().st_size
+    return None
+
+
+def engine_badge() -> str:
+    """Short label for the active execution engine; for page captions."""
+    return "DuckDB" if st.session_state.get("use_duckdb", False) else "pandas"
+
+
+def render_execution_mode_toggle() -> None:
+    """Sidebar widget pair: DuckDB/pandas toggle + clear-cache button.
+
+    Place at the very top of the sidebar on every page so it sits above
+    the data-source picker and filters. Mode persists in
+    `st.session_state["use_duckdb"]` and is folded into the cache key
+    by `filter_signature`, so each mode keeps its own cached results.
+
+    A 500 MB pandas-mode warning fires when the active source exceeds
+    the threshold and the toggle is OFF — nudges the user toward
+    DuckDB without forcing a switch.
+    """
+    sb = st.sidebar
+    sb.markdown("### Execution mode")
+    sb.checkbox(
+        "Load into DuckDB",
+        key="use_duckdb",
+        help=(
+            "OFF: pandas filters the in-memory frame (simple, predictable). "
+            "ON: DuckDB runs SQL against a registered view of the same "
+            "frame — same columns out, same display code."
+        ),
+    )
+    if st.session_state.get("use_duckdb", False):
+        sb.caption(
+            "**DuckDB mode** · SQL engine on the loaded frame. "
+            "Pickle source is bridged through pandas — switch to .parquet "
+            "for true predicate pushdown."
+        )
+    else:
+        sb.caption(
+            "**Pandas mode** · simpler, holds the full dataset in memory. "
+            "Toggle on for DuckDB SQL semantics."
+        )
+
+    # 500 MB warning — only relevant when pandas mode is loading a large file.
+    size = _active_source_size_bytes()
+    if (
+        not st.session_state.get("use_duckdb", False)
+        and size is not None
+        and size > _PANDAS_MODE_WARN_BYTES
+    ):
+        sb.warning(
+            f"Active source is {size / (1024**2):.0f} MB — over the "
+            f"{_PANDAS_MODE_WARN_BYTES // (1024**2)} MB pandas-mode "
+            "threshold. Consider toggling **Load into DuckDB**.",
+            icon="⚠️",
+        )
+
+    if sb.button("Clear cache", width="stretch", help="Clears @st.cache_data; mode toggle is preserved."):
+        st.cache_data.clear()
+        st.toast("Cache cleared.", icon="🧹")
+
+
 def render_data_source_picker() -> None:
     """Sidebar widget for swapping the active data source.
 
@@ -230,8 +303,9 @@ def filter_signature(filters: dict) -> tuple:
     """Hashable, deterministic encoding of the filter dict.
 
     Used as a cache key for `get_filtered_df` and downstream cached
-    aggregations. The leading element is the data-source key so cache
-    entries don't collide when the user swaps the underlying dataset.
+    aggregations. The leading elements are the data-source key and the
+    execution mode so cache entries don't collide when the user swaps
+    the underlying dataset or toggles DuckDB on/off.
     """
     def _conv(v):
         if isinstance(v, list):
@@ -240,14 +314,15 @@ def filter_signature(filters: dict) -> tuple:
             return ("T", v)  # already hashable; preserve element types
         return v
     src = ("__source__", data_source_key())
-    return (src,) + tuple(sorted((k, _conv(v)) for k, v in filters.items()))
+    mode = ("__mode__", "duckdb" if st.session_state.get("use_duckdb", False) else "pandas")
+    return (src, mode) + tuple(sorted((k, _conv(v)) for k, v in filters.items()))
 
 
 def _from_signature(sig: tuple) -> dict:
     out = {}
     for k, v in sig:
-        if k == "__source__":
-            continue  # source key is for cache discrimination only
+        if k in ("__source__", "__mode__"):
+            continue  # discrimination keys only; not real filters
         if isinstance(v, tuple) and len(v) == 2 and v[0] in ("L", "T"):
             out[k] = list(v[1]) if v[0] == "L" else v[1]
         else:
@@ -255,17 +330,141 @@ def _from_signature(sig: tuple) -> dict:
     return out
 
 
-@st.cache_data(show_spinner=False, max_entries=8)
+def _mode_from_signature(sig: tuple) -> str:
+    for k, v in sig:
+        if k == "__mode__":
+            return v
+    return "pandas"
+
+
+@st.cache_resource(show_spinner=False)
+def get_duckdb_con() -> duckdb.DuckDBPyConnection:
+    """In-memory DuckDB connection, shared across reruns and sessions.
+
+    Created lazily on first DuckDB-mode query. The active feature frame
+    is registered as a view named `features` per-query (see
+    `_query_duckdb`) — pickle is not natively readable by DuckDB, so we
+    bridge through pandas: pandas owns the in-memory frame, DuckDB runs
+    SQL against it via zero-copy view registration.
+    """
+    return duckdb.connect(database=":memory:", read_only=False)
+
+
+def _build_duckdb_where(filters: dict) -> tuple[str, list]:
+    """Compose a parameterised WHERE clause from the filter dict.
+
+    Returns (where_sql, params). `where_sql` is empty when no filters
+    apply; otherwise it starts with " WHERE ". Placeholder count for
+    `IN (...)` is generated from the value count — values themselves
+    are bound, never f-stringed.
+    """
+    clauses: list[str] = []
+    params: list = []
+
+    date_range = filters.get("date_range")
+    if date_range and len(date_range) == 2:
+        clauses.append("metadata_originalPostingDate BETWEEN ? AND ?")
+        params.extend([pd.Timestamp(date_range[0]), pd.Timestamp(date_range[1])])
+
+    def _in_clause(col: str, values: list) -> None:
+        if not values:
+            return
+        placeholders = ",".join(["?"] * len(values))
+        clauses.append(f"CAST({col} AS VARCHAR) IN ({placeholders})")
+        params.extend(values)
+
+    _in_clause("category_1", filters.get("categories") or [])
+    _in_clause("title_seniority", filters.get("seniorities") or [])
+    _in_clause("salary_band", filters.get("salary_bands") or [])
+    _in_clause("employmentTypes", filters.get("employment_types") or [])
+
+    yoe_range = filters.get("yoe_range")
+    if yoe_range and yoe_range != (0, 20):
+        clauses.append("minimumYearsExperience BETWEEN ? AND ?")
+        params.extend([yoe_range[0], yoe_range[1]])
+
+    if filters.get("exclude_zero_engagement"):
+        clauses.append("NOT zero_engagement_flag")
+    if filters.get("exclude_mass_hiring"):
+        clauses.append("NOT mass_hiring_flag")
+    if filters.get("exclude_suspicious_low"):
+        clauses.append("NOT salary_suspicious_low")
+
+    employer = filters.get("employer_type", "Both")
+    if employer == "Direct only":
+        clauses.append("NOT is_agency")
+    elif employer == "Agency only":
+        clauses.append("is_agency")
+
+    if not clauses:
+        return "", []
+    return " WHERE " + " AND ".join(clauses), params
+
+
+def _restore_pandas_dtypes(out: pd.DataFrame, src: pd.DataFrame) -> pd.DataFrame:
+    """Coerce DuckDB output dtypes back to the pandas-path dtypes so
+    downstream display code is mode-agnostic.
+
+    DuckDB's `.df()` returns category cols as object and dates as
+    datetime64 — but loses the `category` dtype the pages occasionally
+    rely on. Restore by reusing the source frame's dtype map.
+    """
+    for col in out.columns:
+        if col not in src.columns:
+            continue
+        src_dtype = src[col].dtype
+        if str(src_dtype) == "category" and str(out[col].dtype) != "category":
+            out[col] = pd.Categorical(
+                out[col],
+                categories=src[col].cat.categories,
+                ordered=src[col].cat.ordered,
+            )
+        elif str(src_dtype).startswith("datetime") and not str(out[col].dtype).startswith("datetime"):
+            out[col] = pd.to_datetime(out[col])
+    return out
+
+
+def _query_pandas(sig: tuple) -> pd.DataFrame:
+    """Pandas-mode query path: boolean-mask filter on the in-memory frame."""
+    df = load_features()
+    return apply_filters(df, _from_signature(sig))
+
+
+def _query_duckdb(_con: duckdb.DuckDBPyConnection, sig: tuple) -> pd.DataFrame:
+    """DuckDB-mode query path: register the active frame as a view, run
+    parameterised SQL, return a DataFrame.
+
+    Note on this build: DuckDB runs the filter SQL, but the source
+    pickle is held by pandas (DuckDB cannot read .pkl natively). The
+    benefit here is SQL semantics + DuckDB's vectorised filter engine,
+    not avoiding the pandas load. Switch the source file to .parquet to
+    unlock predicate pushdown without the bridge.
+    """
+    df = load_features()
+    _con.register("features", df)
+    where_sql, params = _build_duckdb_where(_from_signature(sig))
+    sql = f"SELECT * FROM features{where_sql}"
+    out = _con.execute(sql, params).df()
+    out = _restore_pandas_dtypes(out, df)
+    assert set(out.columns) == set(df.columns), (
+        "DuckDB path returned a different column set than the source frame "
+        "— schema parity broken"
+    )
+    return out
+
+
+@st.cache_data(show_spinner="Filtering…", max_entries=8)
 def get_filtered_df(sig: tuple) -> pd.DataFrame:
     """Return the filtered feature frame, cached by filter signature.
 
-    Pages call this instead of `apply_filters(df, filters)` directly.
-    When the user clicks an expander or otherwise triggers a re-render
-    without changing filters, the result is served from cache — no
-    re-scan of the 1M-row frame.
+    Dispatches to the pandas or DuckDB path based on the mode embedded
+    in `sig` (set by `filter_signature` from `st.session_state`). Both
+    paths return DataFrames with the same columns and dtypes so the
+    display layer never branches on mode.
     """
-    df = load_features()
-    return apply_filters(df, _from_signature(sig))
+    if _mode_from_signature(sig) == "duckdb":
+        return _query_duckdb(get_duckdb_con(), sig)
+    return _query_pandas(sig)
 
 
 def apply_filters(df: pd.DataFrame, filters: dict) -> pd.DataFrame:
