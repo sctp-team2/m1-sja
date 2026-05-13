@@ -195,6 +195,63 @@ def engine_badge() -> str:
     return "DuckDB" if st.session_state.get("use_duckdb", False) else "pandas"
 
 
+def render_data_status() -> None:
+    """Sidebar diagnostics: where is the data right now?
+
+    Surfaces the three orthogonal pieces of state a user might wonder
+    about: which source file is active, whether the pandas frame is
+    loaded into the @st.cache_data store, and whether the DuckDB
+    connection is live with a registered view. Architecturally the pkl
+    is always read into pandas first; DuckDB sees a zero-copy view of
+    that same frame (current bridge build).
+    """
+    sb = st.sidebar
+    with sb.expander("Data status", expanded=False):
+        # Source
+        upload = st.session_state.get("uploaded_file")
+        size = _active_source_size_bytes()
+        size_str = f"{size / (1024**2):.0f} MB" if size else "unknown size"
+        if upload is not None:
+            st.markdown(f"**Source:** upload `{upload['name']}` · {size_str}")
+        else:
+            st.markdown(f"**Source:** bundled `{DATA_PATH.name}` · {size_str}")
+
+        # Pandas frame state — every page calls load_features() before
+        # this widget renders, so by now the frame is hot in cache.
+        try:
+            df = load_features()
+            st.markdown(f"**In-memory frame:** loaded · {len(df):,} × {df.shape[1]}")
+        except Exception:
+            st.markdown("**In-memory frame:** not loaded yet")
+
+        # DuckDB connection / view state. Only meaningful in DuckDB mode.
+        if st.session_state.get("use_duckdb", False):
+            con = get_duckdb_con()
+            view_row = con.execute(
+                "SELECT count(*) FROM duckdb_views() WHERE view_name = 'features'"
+            ).fetchone()
+            view_bound = bool(view_row and view_row[0])
+            if view_bound:
+                row_count = con.execute("SELECT count(*) FROM features").fetchone()[0]
+                st.markdown(
+                    f"**DuckDB:** connection live · view `features` bound · "
+                    f"{row_count:,} rows visible"
+                )
+            else:
+                st.markdown(
+                    "**DuckDB:** connection live · view `features` not yet "
+                    "registered (no query has run in this mode)"
+                )
+        else:
+            st.markdown("**DuckDB:** idle (toggle off — pandas filters in use)")
+
+        st.caption(
+            "Architecture: pkl → pandas (cached) → either pandas mask "
+            "or DuckDB SQL on a registered view of the same frame. "
+            "DuckDB never reads pkl directly."
+        )
+
+
 def render_execution_mode_toggle() -> None:
     """Sidebar widget pair: DuckDB/pandas toggle + clear-cache button.
 
