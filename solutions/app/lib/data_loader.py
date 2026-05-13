@@ -2,7 +2,7 @@
 filter-application logic.
 
 `load_features()` is the single entry point for the feature frame —
-every page calls it. By default it reads `data/mcf_features.pkl`. If
+every page calls it. By default it reads `data/m1-eda-clean-v1.pkl`. If
 the user uploads a file through the sidebar (`render_data_source_picker`),
 that file is parsed, fed through `build_features` if it has the raw
 21-column schema, and used in place of the default.
@@ -21,8 +21,8 @@ from pathlib import Path
 import pandas as pd
 import streamlit as st
 
-# solutions/data/mcf_features.pkl relative to this file
-DATA_PATH = Path(__file__).resolve().parents[2] / "data" / "mcf_features.pkl"
+# solutions/data/m1-eda-clean-v1.pkl relative to this file
+DATA_PATH = Path(__file__).resolve().parents[2] / "data" / "m1-eda-clean-v1.pkl"
 
 # Public Drive link to the sample feature pkl. Surfaced as a download
 # button in the sidebar so users grab the file locally, then upload it
@@ -101,7 +101,7 @@ def _load_default() -> pd.DataFrame:
             "Build it first with: "
             "python -c \"import pandas as pd; from feature_engineering import build_features; "
             "build_features(pd.read_pickle('../data/clean_job_step1.pkl'))"
-            ".to_pickle('data/mcf_features.pkl')\""
+            ".to_pickle('data/m1-eda-clean-v1.pkl')\""
         )
     return pd.read_pickle(DATA_PATH)
 
@@ -131,7 +131,7 @@ def load_features() -> pd.DataFrame:
     """Return the active feature frame.
 
     Uses an uploaded file if one is present in `st.session_state`,
-    otherwise the bundled pkl at `data/mcf_features.pkl`.
+    otherwise the bundled pkl at `data/m1-eda-clean-v1.pkl`.
     """
     upload = st.session_state.get("uploaded_file")
     if upload is not None:
@@ -175,7 +175,7 @@ def render_data_source_picker() -> None:
     the source refreshes the filters' option lists.
 
     Two paths to a dataset:
-      1. Bundled `data/mcf_features.pkl` (the default; used when nothing
+      1. Bundled `data/m1-eda-clean-v1.pkl` (the default; used when nothing
          else is loaded — only present when running locally).
       2. Download the sample pkl from Google Drive (link below), then
          upload it back via `st.file_uploader` (.pkl / .csv / .parquet).
@@ -221,7 +221,7 @@ def render_data_source_picker() -> None:
             st.session_state.pop("uploaded_file", None)
     else:
         sb.caption(
-            "Using bundled `data/mcf_features.pkl`. "
+            "Using bundled `data/m1-eda-clean-v1.pkl`. "
             "Click *Load from URL* or upload a file to override."
         )
 
