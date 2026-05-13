@@ -237,6 +237,11 @@ def _set_session_upload(content: bytes, name: str) -> None:
             "hash": digest,
         }
         st.cache_data.clear()
+        # Drop any materialized DuckDB table — it now reflects stale data.
+        try:
+            drop_duckdb_state(get_duckdb_con())
+        except Exception:
+            pass
 
 
 def _active_source_size_bytes() -> int | None:
@@ -299,6 +304,18 @@ def render_data_status() -> None:
     of that same frame (current bridge build).
     """
     with st.expander("Data status", expanded=True):
+        # ── Refresh button — recomputes live metrics on next render ──
+        c_title, c_btn = st.columns([5, 1])
+        c_title.markdown("Live process / system / DuckDB metrics below.")
+        if c_btn.button(
+            "🔄 Refresh",
+            help="Re-fetch process RSS, system memory, and DuckDB engine memory.",
+        ):
+            # _frame_deep_memory is keyed on source key, so it stays
+            # cached unless the source changed. The rerun re-reads
+            # psutil + duckdb_memory() which aren't cached.
+            st.rerun()
+
         # ── Source ───────────────────────────────────────────────────
         upload = st.session_state.get("uploaded_file")
         src_bytes = _active_source_size_bytes()
@@ -386,23 +403,33 @@ def render_data_status() -> None:
         st.markdown("**DuckDB**")
         if st.session_state.get("use_duckdb", False):
             con = get_duckdb_con()
+            materialized = _has_materialized_table(con)
             view_row = con.execute(
                 "SELECT count(*) FROM duckdb_views() WHERE view_name = 'features'"
             ).fetchone()
             view_bound = bool(view_row and view_row[0])
-            if view_bound:
+            if materialized:
                 row_count = con.execute("SELECT count(*) FROM features").fetchone()[0]
                 st.markdown(
-                    f"Connection live · view `features` bound · "
-                    f"**{row_count:,}** rows visible"
+                    f"**Connection: ACTIVE** · `features` is a **materialized "
+                    f"table** · {row_count:,} rows · engine owns the bytes "
+                    "(see Engine memory metric)."
+                )
+            elif view_bound:
+                row_count = con.execute("SELECT count(*) FROM features").fetchone()[0]
+                st.markdown(
+                    f"**Connection: ACTIVE** · `features` is a **view** "
+                    f"(zero-copy bridge to pandas) · {row_count:,} rows · "
+                    "engine memory will read 0 B until you materialize."
                 )
             else:
                 st.markdown(
-                    "Connection live · view `features` not yet registered "
-                    "(no query has run in this mode)"
+                    "**Connection: ACTIVE** · `features` not yet registered "
+                    "(no query has run in this mode). Use the Setup page's "
+                    "**📥 Load DataFrame into DuckDB** button to materialize."
                 )
         else:
-            st.markdown("Idle (toggle off — pandas filters in use).")
+            st.markdown("**Connection: idle** (toggle off — pandas filters in use).")
 
         # ── Environment ──────────────────────────────────────────────
         import numpy as _np
@@ -439,11 +466,53 @@ def render_execution_mode_toggle() -> None:
         ),
     )
     if st.session_state.get("use_duckdb", False):
-        st.caption(
-            "**DuckDB mode** · SQL engine on the loaded frame. "
-            "Pickle source is bridged through pandas — switch to .parquet "
-            "for true predicate pushdown."
-        )
+        # Force eager connection creation so status reads "connected"
+        # even before any query has run.
+        con = get_duckdb_con()
+        materialized = _has_materialized_table(con)
+        if materialized:
+            st.caption(
+                "**DuckDB mode** · connection live · table `features` "
+                "materialized (engine owns its own buffers — visible in "
+                "the engine-memory metric)."
+            )
+        else:
+            st.caption(
+                "**DuckDB mode** · connection live · view-only bridge "
+                "(zero-copy reference to pandas; engine memory reads 0 B "
+                "until you materialize)."
+            )
+
+        # Materialize button — only useful when not already materialized
+        # and a frame is loadable.
+        if not materialized:
+            if st.button(
+                "📥 Load DataFrame into DuckDB",
+                help=(
+                    "Run CREATE TABLE features AS SELECT * FROM <pandas>. "
+                    "DuckDB takes a real copy so engine memory becomes "
+                    "non-zero. Pandas df is kept (mode-switching still "
+                    "works); click Clear cache to release it."
+                ),
+            ):
+                try:
+                    df_src = load_features()
+                    n = materialize_duckdb(con, df_src)
+                    st.toast(
+                        f"Materialized {n:,} rows into DuckDB.",
+                        icon="🦆",
+                    )
+                    st.rerun()
+                except Exception as e:
+                    st.error(f"Materialization failed: {e}")
+        else:
+            if st.button(
+                "♻️ Drop DuckDB table",
+                help="Release DuckDB's copy; queries fall back to the pandas-bridge view.",
+            ):
+                drop_duckdb_state(con)
+                st.toast("Dropped features table.", icon="🦆")
+                st.rerun()
     else:
         st.caption(
             "**Pandas mode** · simpler, holds the full dataset in memory. "
@@ -520,10 +589,40 @@ def render_data_source_picker() -> None:
     else:
         resolved = _resolve_default_path()
         if resolved is not None:
+            size_mb = resolved.stat().st_size / (1024 ** 2)
             st.caption(
-                f"Using bundled `data/{resolved.name}`. "
+                f"Using bundled `data/{resolved.name}` · {size_mb:.0f} MB. "
                 "Upload a file above to override."
             )
+            if st.button(
+                "🔄 Load default file",
+                help=(
+                    "Re-read the bundled file from disk and warm the cache. "
+                    "Use this after an app restart or OOM crash to get back "
+                    "to a known-good state in one click."
+                ),
+                type="primary",
+            ):
+                # 1. Drop every cached frame and DuckDB object so we
+                #    don't read stale data after a re-init.
+                st.cache_data.clear()
+                try:
+                    drop_duckdb_state(get_duckdb_con())
+                except Exception:
+                    pass
+                # 2. Eagerly call the loader — populates _load_default's
+                #    cache so the next page render is instant.
+                with st.spinner(f"Loading `{resolved.name}`…"):
+                    try:
+                        df = load_features()
+                        st.toast(
+                            f"Loaded {resolved.name} · {len(df):,} × {df.shape[1]}",
+                            icon="📂",
+                        )
+                    except Exception as e:
+                        st.error(f"Load failed: {e}")
+                        st.stop()
+                st.rerun()
         else:
             cands = " or ".join(f"`data/{p.name}`" for p in _DEFAULT_CANDIDATES)
             st.caption(
@@ -567,6 +666,74 @@ def _mode_from_signature(sig: tuple) -> str:
         if k == "__mode__":
             return v
     return "pandas"
+
+
+def _has_materialized_table(con: duckdb.DuckDBPyConnection) -> bool:
+    """True when a real DuckDB table named 'features' exists on this
+    connection (not just a registered pandas view)."""
+    try:
+        row = con.execute(
+            "SELECT count(*) FROM duckdb_tables() WHERE table_name = 'features'"
+        ).fetchone()
+        return bool(row and row[0])
+    except Exception:
+        return False
+
+
+def _drop_features_object(con: duckdb.DuckDBPyConnection) -> None:
+    """Drop the 'features' table or view, whichever exists.
+
+    DuckDB errors if you DROP TABLE on a view or DROP VIEW on a table,
+    so we discriminate up-front."""
+    try:
+        is_table = bool(con.execute(
+            "SELECT count(*) FROM duckdb_tables() WHERE table_name = 'features'"
+        ).fetchone()[0])
+        is_view = bool(con.execute(
+            "SELECT count(*) FROM duckdb_views() WHERE view_name = 'features'"
+        ).fetchone()[0])
+    except Exception:
+        is_table = is_view = False
+    if is_table:
+        try:
+            con.execute("DROP TABLE features")
+        except Exception:
+            pass
+    if is_view:
+        try:
+            con.execute("DROP VIEW features")
+        except Exception:
+            pass
+
+
+def materialize_duckdb(con: duckdb.DuckDBPyConnection, df: pd.DataFrame) -> int:
+    """Copy the active pandas frame into a real DuckDB table.
+
+    Forces DuckDB to allocate its own column buffers (the bridge view
+    is zero-copy, so the engine-memory metric reads 0 B until this
+    runs). Idempotent — drops any prior table or view first.
+    Returns the row count.
+    """
+    _drop_features_object(con)
+    # Temporary alias used only for the COPY, then released.
+    con.register("_features_src", df)
+    try:
+        con.execute("CREATE TABLE features AS SELECT * FROM _features_src")
+    finally:
+        try:
+            con.unregister("_features_src")
+        except Exception:
+            pass
+    row = con.execute("SELECT count(*) FROM features").fetchone()
+    return int(row[0]) if row else 0
+
+
+def drop_duckdb_state(con: duckdb.DuckDBPyConnection) -> None:
+    """Drop any materialized table or registered view named 'features'.
+
+    Called when the data source changes — the prior materialized copy
+    no longer reflects the active frame."""
+    _drop_features_object(con)
 
 
 @st.cache_resource(show_spinner=False)
@@ -673,10 +840,13 @@ def _query_duckdb(_con: duckdb.DuckDBPyConnection, sig: tuple) -> pd.DataFrame:
     unlock predicate pushdown without the bridge.
     """
     df = load_features()
-    # register() is REPLACE semantics — re-binding "features" to the
-    # current frame each call ensures DuckDB sees the active upload,
-    # never a stale one from a previous file.
-    _con.register("features", df)
+    if not _has_materialized_table(_con):
+        # No real table yet — register a zero-copy view of the active
+        # pandas df. register() has REPLACE semantics, so a new upload
+        # automatically swaps the binding on the next query.
+        _con.register("features", df)
+    # Else: a materialized table is in place. Trust it and SELECT from
+    # it directly; the materialize path drops the view when copying.
     where_sql, params = _build_duckdb_where(_from_signature(sig))
     sql = f"SELECT * FROM features{where_sql}"
     out = _con.execute(sql, params).df()

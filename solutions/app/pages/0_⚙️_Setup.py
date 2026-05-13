@@ -26,6 +26,13 @@ st.caption(
     "persist across pages — no need to revisit unless you want to "
     "change something."
 )
+st.info(
+    "**After an app restart or OOM crash:** come here, click "
+    "**🔄 Load default file** (left panel) to re-warm the cache "
+    "in one click, then optionally **📥 Load DataFrame into DuckDB** "
+    "(right panel) if you want DuckDB to own the bytes.",
+    icon="💡",
+)
 
 col_src, col_mode = st.columns(2)
 with col_src:
