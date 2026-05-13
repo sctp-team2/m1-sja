@@ -1,0 +1,3 @@
+[server]
+# Bump from the 200 MB default — the sample mcf_features.pkl is ~226 MB.
+maxUploadSize = 500
