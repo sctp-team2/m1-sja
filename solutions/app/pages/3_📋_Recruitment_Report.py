@@ -25,19 +25,19 @@ import streamlit as st
 
 from lib.chart_helpers import PALETTE, fmt_int, fmt_sgd
 from lib.data_loader import (
-    engine_badge, filter_signature, get_filtered_df, load_features_or_stop,
+    engine_badge, filter_signature, get_filtered_df, load_metadata_or_stop,
 )
 from lib.filters import filter_summary, render_sidebar_filters
 from lib.suggestions import ACTION_LIST_LABELS, SEVERITY_BADGE, suggest_for_df
 
 st.set_page_config(page_title="Recruitment Report · HR Recruiter Insights", layout="wide")
 
-df = load_features_or_stop()
-filters = render_sidebar_filters(df)
+meta = load_metadata_or_stop()
+filters = render_sidebar_filters(meta)
 SIG = filter_signature(filters)
 df_f = get_filtered_df(SIG)
 st.sidebar.markdown("---")
-st.sidebar.markdown(filter_summary(filters, df_f, df))
+st.sidebar.markdown(filter_summary(filters, df_f, meta))
 
 st.title("Recruitment Report")
 st.caption(

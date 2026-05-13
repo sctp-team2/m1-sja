@@ -23,17 +23,17 @@ from lib.chart_helpers import (
     fmt_sgd, themed,
 )
 from lib.data_loader import (
-    engine_badge, filter_signature, get_filtered_df, load_features_or_stop,
+    engine_badge, filter_signature, get_filtered_df, load_metadata_or_stop,
 )
 from lib.filters import filter_summary, render_sidebar_filters
 
 st.set_page_config(page_title="Overview · HR Recruiter Insights", layout="wide")
 
-df = load_features_or_stop()
-filters = render_sidebar_filters(df)
+meta = load_metadata_or_stop()
+filters = render_sidebar_filters(meta)
 df_f = get_filtered_df(filter_signature(filters))
 st.sidebar.markdown("---")
-st.sidebar.markdown(filter_summary(filters, df_f, df))
+st.sidebar.markdown(filter_summary(filters, df_f, meta))
 
 st.title("Singapore Job Market Overview")
 if len(df_f):
@@ -54,14 +54,15 @@ top_category = df_f["category_1"].mode().iloc[0] if not df_f["category_1"].mode(
 median_duration = df_f["posting_duration_days"].median()
 repost_share = df_f["is_reposted"].mean()
 
-# Baseline (unfiltered) for delta context
-all_median_salary = df["average_salary"].median()
-all_median_duration = df["posting_duration_days"].median()
-all_repost_share = df["is_reposted"].mean()
+# Baseline (unfiltered) for delta context — read from cached metadata
+# so we don't need to keep the full pandas frame in memory.
+all_median_salary = meta["all_median_salary"]
+all_median_duration = meta["all_median_duration"]
+all_repost_share = meta["all_repost_share"]
 
 k1, k2, k3, k4, k5 = st.columns(5)
 k1.metric("Total postings", fmt_int(len(df_f)),
-          delta=f"of {len(df):,} total", delta_color="off")
+          delta=f"of {meta['total_rows']:,} total", delta_color="off")
 k2.metric("Median salary", fmt_sgd(median_salary),
           delta=fmt_sgd(median_salary - all_median_salary) if pd.notna(median_salary) else None)
 k3.metric("Top category", str(top_category))

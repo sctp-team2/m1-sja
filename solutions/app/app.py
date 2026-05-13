@@ -15,7 +15,7 @@ import streamlit as st
 
 from lib.chart_helpers import PALETTE, fmt_int, fmt_sgd
 from lib.data_loader import (
-    engine_badge, filter_signature, get_filtered_df, load_features_or_stop,
+    engine_badge, filter_signature, get_filtered_df, load_metadata_or_stop,
 )
 from lib.filters import filter_summary, render_sidebar_filters
 
@@ -31,12 +31,12 @@ st.caption(
     f"Built on MyCareersFuture postings. · Engine: **{engine_badge()}**"
 )
 
-df = load_features_or_stop()
-filters = render_sidebar_filters(df)
+meta = load_metadata_or_stop()
+filters = render_sidebar_filters(meta)
 df_f = get_filtered_df(filter_signature(filters))
 
 st.sidebar.markdown("---")
-st.sidebar.markdown(filter_summary(filters, df_f, df))
+st.sidebar.markdown(filter_summary(filters, df_f, meta))
 
 st.markdown("### Use the sidebar to navigate")
 st.markdown(
@@ -57,7 +57,7 @@ st.markdown(
 st.markdown("### Right now")
 c1, c2, c3, c4 = st.columns(4)
 c1.metric("Postings in view", fmt_int(len(df_f)),
-          delta=f"{len(df_f) / len(df):.0%} of total" if len(df) else None,
+          delta=f"{len(df_f) / meta['total_rows']:.0%} of total" if meta["total_rows"] else None,
           delta_color="off")
 c2.metric("Median salary", fmt_sgd(df_f["average_salary"].median()) if len(df_f) else "—")
 c3.metric(

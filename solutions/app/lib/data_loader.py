@@ -219,6 +219,128 @@ def load_features_or_stop() -> pd.DataFrame:
         st.stop()
 
 
+# Columns whose distinct values feed sidebar dropdowns. Kept here so
+# both the pandas and DuckDB meta paths agree on the schema surface.
+_FILTER_OPTION_COLS = (
+    "category_1", "title_seniority", "salary_band", "employmentTypes",
+)
+
+
+def _meta_from_df(df: pd.DataFrame) -> dict:
+    """Compute the small metadata blob from an in-memory frame."""
+    return {
+        "total_rows": int(len(df)),
+        "date_min": pd.Timestamp(df["metadata_originalPostingDate"].min()),
+        "date_max": pd.Timestamp(df["metadata_originalPostingDate"].max()),
+        "categories": sorted(df["category_1"].dropna().astype(str).unique().tolist()),
+        "seniorities": sorted(df["title_seniority"].astype(str).unique().tolist()),
+        "salary_bands": sorted(df["salary_band"].astype(str).unique().tolist()),
+        "employment_types": sorted(df["employmentTypes"].dropna().astype(str).unique().tolist()),
+        # Page 1 KPI deltas — cheap aggregates over the full frame.
+        "all_median_salary": float(df["average_salary"].median()),
+        "all_median_duration": float(df["posting_duration_days"].median()),
+        "all_repost_share": float(df["is_reposted"].mean()),
+    }
+
+
+def _meta_from_duckdb(con: duckdb.DuckDBPyConnection) -> dict:
+    """Compute the same metadata via SQL against the materialized table.
+
+    Used when the pandas frame has been released to free memory."""
+    one = lambda sql: con.execute(sql).fetchone()[0]
+    distinct = lambda col: [
+        r[0] for r in con.execute(
+            f"SELECT DISTINCT CAST({col} AS VARCHAR) FROM features "
+            f"WHERE {col} IS NOT NULL ORDER BY 1"
+        ).fetchall()
+    ]
+    return {
+        "total_rows": int(one("SELECT count(*) FROM features")),
+        "date_min": pd.Timestamp(one(
+            "SELECT min(metadata_originalPostingDate) FROM features")),
+        "date_max": pd.Timestamp(one(
+            "SELECT max(metadata_originalPostingDate) FROM features")),
+        "categories": distinct("category_1"),
+        "seniorities": distinct("title_seniority"),
+        "salary_bands": distinct("salary_band"),
+        "employment_types": distinct("employmentTypes"),
+        "all_median_salary": float(one("SELECT median(average_salary) FROM features")),
+        "all_median_duration": float(one("SELECT median(posting_duration_days) FROM features")),
+        "all_repost_share": float(one("SELECT avg(CAST(is_reposted AS INTEGER)) FROM features")),
+    }
+
+
+@st.cache_data(show_spinner="Computing dataset metadata…")
+def _cached_meta(source_key: str, mode_key: str) -> dict:
+    """Source-keyed metadata cache.
+
+    `mode_key` distinguishes "pandas-backed" vs "duckdb-backed" so
+    that releasing pandas correctly busts the cache and forces a
+    DuckDB query path on the next call.
+    """
+    if mode_key == "duckdb":
+        return _meta_from_duckdb(get_duckdb_con())
+    return _meta_from_df(load_features())
+
+
+def load_metadata() -> dict:
+    """Return the lite metadata pages need (filter options, totals,
+    KPI deltas). Routes to DuckDB when pandas has been released."""
+    pandas_released = st.session_state.get("pandas_released", False)
+    duck_has_table = (
+        st.session_state.get("use_duckdb", False)
+        and _has_materialized_table(get_duckdb_con())
+    )
+    mode_key = "duckdb" if (pandas_released and duck_has_table) else "pandas"
+    return _cached_meta(data_source_key(), mode_key)
+
+
+def load_metadata_or_stop() -> dict:
+    """`load_metadata` with the friendly Setup-redirect on no-data."""
+    try:
+        return load_metadata()
+    except FileNotFoundError:
+        st.info(
+            "📂 No dataset loaded yet. Open the **⚙️ Setup** page "
+            "(left sidebar nav) to upload one."
+        )
+        if st.button("Go to ⚙️ Setup"):
+            st.switch_page("pages/0_⚙️_Setup.py")
+        st.stop()
+    except ValueError as e:
+        st.error(f"📂 {e}")
+        st.stop()
+
+
+def _capture_dtype_spec(df: pd.DataFrame) -> dict:
+    """Snapshot a frame's dtypes + category levels so DuckDB queries
+    can restore them after the source frame is gone."""
+    return {
+        "dtypes": {c: str(df[c].dtype) for c in df.columns},
+        "categories": {
+            c: list(df[c].cat.categories) for c in df.columns
+            if str(df[c].dtype) == "category"
+        },
+        "categories_ordered": {
+            c: bool(df[c].cat.ordered) for c in df.columns
+            if str(df[c].dtype) == "category"
+        },
+    }
+
+
+def release_pandas_frame() -> None:
+    """Free the cached pandas df so DuckDB-only mode actually saves
+    memory. Safe to call only when a materialized DuckDB table exists
+    (otherwise queries would re-trigger a pandas load).
+    """
+    _load_default.clear()
+    _load_upload.clear()
+    _cached_meta.clear()
+    _frame_deep_memory.clear()
+    get_filtered_df.clear()
+    st.session_state["pandas_released"] = True
+
+
 def _set_session_upload(content: bytes, name: str) -> None:
     """Store an upload in session_state with a hash for cache discrimination.
 
@@ -456,13 +578,20 @@ def render_execution_mode_toggle() -> None:
     active source exceeds the threshold and the toggle is OFF.
     """
     st.markdown("### Execution mode")
+    pandas_released = st.session_state.get("pandas_released", False)
+    if pandas_released:
+        # No pandas frame to fall back to — lock the toggle on.
+        st.session_state["use_duckdb"] = True
     st.checkbox(
         "Load into DuckDB",
         key="use_duckdb",
+        disabled=pandas_released,
         help=(
             "OFF: pandas filters the in-memory frame (simple, predictable). "
             "ON: DuckDB runs SQL against a registered view of the same "
             "frame — same columns out, same display code."
+            + ("\n\nLocked ON: pandas frame has been released; only DuckDB "
+               "can serve queries until you drop the DuckDB table." if pandas_released else "")
         ),
     )
     if st.session_state.get("use_duckdb", False):
@@ -506,13 +635,32 @@ def render_execution_mode_toggle() -> None:
                 except Exception as e:
                     st.error(f"Materialization failed: {e}")
         else:
-            if st.button(
-                "♻️ Drop DuckDB table",
-                help="Release DuckDB's copy; queries fall back to the pandas-bridge view.",
-            ):
-                drop_duckdb_state(con)
-                st.toast("Dropped features table.", icon="🦆")
-                st.rerun()
+            cols_act = st.columns(2)
+            with cols_act[0]:
+                if st.button(
+                    "♻️ Drop DuckDB table",
+                    help="Release DuckDB's copy; queries fall back to the pandas-bridge view.",
+                ):
+                    drop_duckdb_state(con)
+                    st.session_state.pop("pandas_released", None)
+                    st.toast("Dropped features table.", icon="🦆")
+                    st.rerun()
+            with cols_act[1]:
+                released = st.session_state.get("pandas_released", False)
+                if not released:
+                    if st.button(
+                        "🪫 Release pandas frame",
+                        help=(
+                            "Drop the cached pandas df so DuckDB-only mode "
+                            "actually saves memory. Filters and analysis "
+                            "keep working — pages route through DuckDB."
+                        ),
+                    ):
+                        release_pandas_frame()
+                        st.toast("Released pandas frame.", icon="🪫")
+                        st.rerun()
+                else:
+                    st.caption("Pandas frame released · pages use DuckDB only.")
     else:
         st.caption(
             "**Pandas mode** · simpler, holds the full dataset in memory. "
@@ -645,7 +793,13 @@ def filter_signature(filters: dict) -> tuple:
             return ("T", v)  # already hashable; preserve element types
         return v
     src = ("__source__", data_source_key())
-    mode = ("__mode__", "duckdb" if st.session_state.get("use_duckdb", False) else "pandas")
+    # If the pandas frame has been released, force the DuckDB path —
+    # _query_pandas would try to re-load from disk otherwise.
+    use_duckdb = (
+        st.session_state.get("use_duckdb", False)
+        or st.session_state.get("pandas_released", False)
+    )
+    mode = ("__mode__", "duckdb" if use_duckdb else "pandas")
     return (src, mode) + tuple(sorted((k, _conv(v)) for k, v in filters.items()))
 
 
@@ -712,6 +866,11 @@ def materialize_duckdb(con: duckdb.DuckDBPyConnection, df: pd.DataFrame) -> int:
     Forces DuckDB to allocate its own column buffers (the bridge view
     is zero-copy, so the engine-memory metric reads 0 B until this
     runs). Idempotent — drops any prior table or view first.
+
+    Also captures a dtype spec from the source df so DuckDB query
+    results can restore pandas dtypes even after the source frame is
+    released.
+
     Returns the row count.
     """
     _drop_features_object(con)
@@ -724,6 +883,7 @@ def materialize_duckdb(con: duckdb.DuckDBPyConnection, df: pd.DataFrame) -> int:
             con.unregister("_features_src")
         except Exception:
             pass
+    st.session_state["materialized_dtype_spec"] = _capture_dtype_spec(df)
     row = con.execute("SELECT count(*) FROM features").fetchone()
     return int(row[0]) if row else 0
 
@@ -800,25 +960,27 @@ def _build_duckdb_where(filters: dict) -> tuple[str, list]:
     return " WHERE " + " AND ".join(clauses), params
 
 
-def _restore_pandas_dtypes(out: pd.DataFrame, src: pd.DataFrame) -> pd.DataFrame:
-    """Coerce DuckDB output dtypes back to the pandas-path dtypes so
-    downstream display code is mode-agnostic.
+def _restore_pandas_dtypes(out: pd.DataFrame, spec: dict) -> pd.DataFrame:
+    """Coerce DuckDB output dtypes back to the pandas-path dtypes.
 
-    DuckDB's `.df()` returns category cols as object and dates as
-    datetime64 — but loses the `category` dtype the pages occasionally
-    rely on. Restore by reusing the source frame's dtype map.
+    `spec` is the dict produced by `_capture_dtype_spec` — keeps this
+    function pandas-source-independent so DuckDB-only mode (pandas
+    frame released) still works.
     """
+    dtypes = spec.get("dtypes", {})
+    cats = spec.get("categories", {})
+    cats_ordered = spec.get("categories_ordered", {})
     for col in out.columns:
-        if col not in src.columns:
+        src_dtype = dtypes.get(col)
+        if src_dtype is None:
             continue
-        src_dtype = src[col].dtype
-        if str(src_dtype) == "category" and str(out[col].dtype) != "category":
+        if src_dtype == "category" and str(out[col].dtype) != "category":
             out[col] = pd.Categorical(
                 out[col],
-                categories=src[col].cat.categories,
-                ordered=src[col].cat.ordered,
+                categories=cats.get(col, []),
+                ordered=cats_ordered.get(col, False),
             )
-        elif str(src_dtype).startswith("datetime") and not str(out[col].dtype).startswith("datetime"):
+        elif src_dtype.startswith("datetime") and not str(out[col].dtype).startswith("datetime"):
             out[col] = pd.to_datetime(out[col])
     return out
 
@@ -830,31 +992,32 @@ def _query_pandas(sig: tuple) -> pd.DataFrame:
 
 
 def _query_duckdb(_con: duckdb.DuckDBPyConnection, sig: tuple) -> pd.DataFrame:
-    """DuckDB-mode query path: register the active frame as a view, run
-    parameterised SQL, return a DataFrame.
+    """DuckDB-mode query path.
 
-    Note on this build: DuckDB runs the filter SQL, but the source
-    pickle is held by pandas (DuckDB cannot read .pkl natively). The
-    benefit here is SQL semantics + DuckDB's vectorised filter engine,
-    not avoiding the pandas load. Switch the source file to .parquet to
-    unlock predicate pushdown without the bridge.
+    Two modes inside DuckDB:
+      a. Materialized table — DuckDB owns the bytes. We don't need to
+         load the pandas frame at all, so this works even after
+         `release_pandas_frame()`. Dtype restoration uses the spec
+         captured at materialize time.
+      b. View-only bridge — registers a zero-copy view of the pandas
+         df on the connection per call (REPLACE semantics). Requires
+         the pandas frame to be loadable.
     """
-    df = load_features()
-    if not _has_materialized_table(_con):
-        # No real table yet — register a zero-copy view of the active
-        # pandas df. register() has REPLACE semantics, so a new upload
-        # automatically swaps the binding on the next query.
+    if _has_materialized_table(_con):
+        spec = st.session_state.get("materialized_dtype_spec", {"dtypes": {}})
+    else:
+        df = load_features()
         _con.register("features", df)
-    # Else: a materialized table is in place. Trust it and SELECT from
-    # it directly; the materialize path drops the view when copying.
+        spec = _capture_dtype_spec(df)
     where_sql, params = _build_duckdb_where(_from_signature(sig))
     sql = f"SELECT * FROM features{where_sql}"
     out = _con.execute(sql, params).df()
-    out = _restore_pandas_dtypes(out, df)
-    assert set(out.columns) == set(df.columns), (
-        "DuckDB path returned a different column set than the source frame "
-        "— schema parity broken"
-    )
+    out = _restore_pandas_dtypes(out, spec)
+    if spec["dtypes"]:
+        assert set(out.columns) == set(spec["dtypes"].keys()), (
+            "DuckDB path returned a different column set than the source "
+            "— schema parity broken"
+        )
     return out
 
 

@@ -1,6 +1,6 @@
 """Sidebar filter widget shared across all pages.
 
-`render_sidebar_filters(df)` draws the filter controls in
+`render_sidebar_filters(meta)` draws the filter controls in
 `st.sidebar` and returns a dict consumed by
 `data_loader.apply_filters`. State persists across pages via
 `st.session_state`, so users don't lose context when navigating.
@@ -14,6 +14,12 @@ Filter inventory (matches spec section 4):
   6. Employment type
   7. Quality filters (expander): zero-engagement, mass-hiring,
      suspicious-low salaries, employer type
+
+The function takes a lightweight metadata dict (see
+`data_loader.load_metadata`) rather than a full DataFrame so pages
+don't need the source frame in memory just to populate dropdowns —
+this is what enables the DuckDB-only mode after the pandas frame is
+released.
 """
 
 from __future__ import annotations
@@ -36,7 +42,7 @@ _FILTER_KEYS = (
 )
 
 
-def _init_defaults(df: pd.DataFrame) -> None:
+def _init_defaults(meta: dict) -> None:
     """Seed any missing session_state filter values.
 
     Idempotent — `setdefault` only writes when the key is absent. Safe to
@@ -44,8 +50,8 @@ def _init_defaults(df: pd.DataFrame) -> None:
     re-populate widget-bound keys until the widget is rendered, and we
     want defaults available for downstream code regardless.
     """
-    min_date = df["metadata_originalPostingDate"].min().date()
-    max_date = df["metadata_originalPostingDate"].max().date()
+    min_date = meta["date_min"].date()
+    max_date = meta["date_max"].date()
     st.session_state.setdefault("date_range", (min_date, max_date))
     st.session_state.setdefault("categories", [])
     st.session_state.setdefault("seniorities", [])
@@ -58,7 +64,7 @@ def _init_defaults(df: pd.DataFrame) -> None:
     st.session_state.setdefault("employer_type", "Both")
 
 
-def _reset_filters(df: pd.DataFrame) -> None:
+def _reset_filters(meta: dict) -> None:
     """Reassign filter session_state to defaults.
 
     Must run inside an `on_click` callback (pre-rerun), not after the
@@ -66,8 +72,8 @@ def _reset_filters(df: pd.DataFrame) -> None:
     widget-bound keys mid-run desyncs Streamlit's internal
     `$$WIDGET_ID-…` mapping and raises a KeyError on the next access.
     """
-    min_date = df["metadata_originalPostingDate"].min().date()
-    max_date = df["metadata_originalPostingDate"].max().date()
+    min_date = meta["date_min"].date()
+    max_date = meta["date_max"].date()
     st.session_state["date_range"] = (min_date, max_date)
     st.session_state["categories"] = []
     st.session_state["seniorities"] = []
@@ -80,15 +86,15 @@ def _reset_filters(df: pd.DataFrame) -> None:
     st.session_state["employer_type"] = "Both"
 
 
-def render_sidebar_filters(df: pd.DataFrame) -> dict:
+def render_sidebar_filters(meta: dict) -> dict:
     """Render the sidebar and return the active filter dict."""
-    _init_defaults(df)
+    _init_defaults(meta)
 
     sb = st.sidebar
     sb.markdown("### Filters")
 
-    min_date = df["metadata_originalPostingDate"].min().date()
-    max_date = df["metadata_originalPostingDate"].max().date()
+    min_date = meta["date_min"].date()
+    max_date = meta["date_max"].date()
 
     sb.date_input(
         "Posting date range",
@@ -97,18 +103,14 @@ def render_sidebar_filters(df: pd.DataFrame) -> dict:
         key="date_range",
     )
 
-    sb.multiselect(
-        "Category",
-        options=sorted(df["category_1"].dropna().astype(str).unique()),
-        key="categories",
-    )
+    sb.multiselect("Category", options=meta["categories"], key="categories")
 
     seniority_order = ["C-suite", "Director/Head", "Manager/Lead", "Senior", "Mid/Other", "Junior"]
-    seniority_opts = [s for s in seniority_order if s in df["title_seniority"].astype(str).unique()]
+    seniority_opts = [s for s in seniority_order if s in meta["seniorities"]]
     sb.multiselect("Seniority", options=seniority_opts, key="seniorities")
 
     band_order = ["<3k", "3-5k", "5-8k", "8-12k", "12-20k", "20k+"]
-    band_opts = [b for b in band_order if b in df["salary_band"].astype(str).unique()]
+    band_opts = [b for b in band_order if b in meta["salary_bands"]]
     sb.multiselect("Salary band", options=band_opts, key="salary_bands")
 
     sb.slider(
@@ -117,11 +119,7 @@ def render_sidebar_filters(df: pd.DataFrame) -> dict:
         key="yoe_range",
     )
 
-    sb.multiselect(
-        "Employment type",
-        options=sorted(df["employmentTypes"].dropna().astype(str).unique()),
-        key="employment_types",
-    )
+    sb.multiselect("Employment type", options=meta["employment_types"], key="employment_types")
 
     with sb.expander("Data quality", expanded=False):
         st.checkbox("Exclude zero-engagement postings", key="exclude_zero_engagement")
@@ -139,13 +137,13 @@ def render_sidebar_filters(df: pd.DataFrame) -> dict:
         "Reset filters",
         width="stretch",
         on_click=_reset_filters,
-        args=(df,),
+        args=(meta,),
     )
 
     return {k: st.session_state[k] for k in _FILTER_KEYS}
 
 
-def filter_summary(filters: dict, df_filtered: pd.DataFrame, df_total: pd.DataFrame) -> str:
+def filter_summary(filters: dict, df_filtered: pd.DataFrame, meta: dict) -> str:
     """One-line summary chip describing the active filter set."""
     chips = []
     if filters["categories"]:
@@ -159,5 +157,5 @@ def filter_summary(filters: dict, df_filtered: pd.DataFrame, df_total: pd.DataFr
     if filters["employer_type"] != "Both":
         chips.append(filters["employer_type"])
     chip_text = " · ".join(chips) if chips else "all postings"
-    n, total = len(df_filtered), len(df_total)
+    n, total = len(df_filtered), int(meta["total_rows"])
     return f"**{n:,}** of {total:,} postings ({n / total:.1%}) — {chip_text}"
