@@ -30,8 +30,56 @@ except ImportError:
 # Pandas-mode disk-size threshold for the "consider DuckDB" warning.
 _PANDAS_MODE_WARN_BYTES = 500 * 1024 * 1024  # 500 MB per upgrade-v2.md spec
 
-# solutions/data/m1-eda-clean-v1.pkl relative to this file
-DATA_PATH = Path(__file__).resolve().parents[2] / "data" / "m1-eda-clean-v1.pkl"
+# Default-data candidates, tried in order. First existing wins.
+# Parquet is preferred when present: smaller on disk, column pruning
+# when DuckDB mode reads it directly (future), and faster pandas load.
+_DATA_DIR = Path(__file__).resolve().parents[2] / "data"
+_DEFAULT_CANDIDATES: tuple[Path, ...] = (
+    _DATA_DIR / "eda_step3_data.parquet",
+    _DATA_DIR / "m1-eda-clean-v1.pkl",
+)
+
+
+def _resolve_default_path() -> Path | None:
+    """Return the first candidate that exists on disk, else None."""
+    for p in _DEFAULT_CANDIDATES:
+        if p.exists():
+            return p
+    return None
+
+
+def _default_path_for_display() -> Path:
+    """Resolved default if present, otherwise the preferred candidate
+    (useful for status strings even when neither file exists yet)."""
+    return _resolve_default_path() or _DEFAULT_CANDIDATES[0]
+
+
+# Back-compat alias for code that still references DATA_PATH. Resolves
+# at call time so a file appearing later in the session is picked up.
+class _DataPathProxy:
+    def __getattr__(self, item):
+        return getattr(_default_path_for_display(), item)
+
+    def __fspath__(self) -> str:
+        return str(_default_path_for_display())
+
+    def __str__(self) -> str:
+        return str(_default_path_for_display())
+
+
+DATA_PATH = _DataPathProxy()
+
+
+def _read_data_file(path: Path) -> pd.DataFrame:
+    """Format-dispatched read for a file path (mirrors _parse_upload)."""
+    ext = path.suffix.lower().lstrip(".")
+    if ext in ("pkl", "pickle"):
+        return pd.read_pickle(path)
+    if ext == "csv":
+        return pd.read_csv(path, low_memory=False)
+    if ext == "parquet":
+        return pd.read_parquet(path)
+    raise ValueError(f"Unsupported default-file extension: {ext} ({path})")
 
 # Public Drive link to the sample feature pkl. Surfaced as a download
 # button in the sidebar so users grab the file locally, then upload it
@@ -104,15 +152,19 @@ def _ensure_features(df: pd.DataFrame) -> pd.DataFrame:
 
 @st.cache_data(show_spinner="Loading default feature data…")
 def _load_default() -> pd.DataFrame:
-    if not DATA_PATH.exists():
+    path = _resolve_default_path()
+    if path is None:
+        candidates = " or ".join(p.name for p in _DEFAULT_CANDIDATES)
         raise FileNotFoundError(
-            f"Feature pickle not found at {DATA_PATH}. "
-            "Build it first with: "
-            "python -c \"import pandas as pd; from feature_engineering import build_features; "
-            "build_features(pd.read_pickle('../data/clean_job_step1.pkl'))"
-            ".to_pickle('data/m1-eda-clean-v1.pkl')\""
+            f"No default data file present. Looked for {candidates} "
+            f"under {_DATA_DIR}/. Drop one in, or upload via the "
+            "Setup page."
         )
-    return pd.read_pickle(DATA_PATH)
+    df = _read_data_file(path)
+    # Raw uploads get auto-engineered; do the same for raw defaults so
+    # a freshly-dropped parquet of step-1 data still becomes a feature
+    # frame the rest of the app expects.
+    return _ensure_features(df)
 
 
 @st.cache_data(show_spinner="Parsing uploaded file…", max_entries=4)
@@ -192,8 +244,9 @@ def _active_source_size_bytes() -> int | None:
     upload = st.session_state.get("uploaded_file")
     if upload is not None:
         return len(upload["content"])
-    if DATA_PATH.exists():
-        return DATA_PATH.stat().st_size
+    p = _resolve_default_path()
+    if p is not None:
+        return p.stat().st_size
     return None
 
 
@@ -253,7 +306,7 @@ def render_data_status() -> None:
         if upload is not None:
             st.markdown(f"**Source:** upload `{upload['name']}` · {src_size_str}")
         else:
-            st.markdown(f"**Source:** bundled `{DATA_PATH.name}` · {src_size_str}")
+            st.markdown(f"**Source:** bundled `{_default_path_for_display().name}` · {src_size_str}")
 
         # ── Memory metrics (the four the operator most often needs) ──
         st.markdown("**Memory**")
@@ -465,10 +518,17 @@ def render_data_source_picker() -> None:
             st.error(f"Could not load active dataset: {e}")
             st.session_state.pop("uploaded_file", None)
     else:
-        st.caption(
-            "Using bundled `data/m1-eda-clean-v1.pkl`. "
-            "Upload a file above to override."
-        )
+        resolved = _resolve_default_path()
+        if resolved is not None:
+            st.caption(
+                f"Using bundled `data/{resolved.name}`. "
+                "Upload a file above to override."
+            )
+        else:
+            cands = " or ".join(f"`data/{p.name}`" for p in _DEFAULT_CANDIDATES)
+            st.caption(
+                f"No bundled file found ({cands}). Upload one above."
+            )
 
 
 def filter_signature(filters: dict) -> tuple:
