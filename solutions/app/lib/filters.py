@@ -59,9 +59,25 @@ def _init_defaults(df: pd.DataFrame) -> None:
 
 
 def _reset_filters(df: pd.DataFrame) -> None:
-    for k in _FILTER_KEYS:
-        st.session_state.pop(k, None)
-    _init_defaults(df)
+    """Reassign filter session_state to defaults.
+
+    Must run inside an `on_click` callback (pre-rerun), not after the
+    widgets have been instantiated on the current run. Popping
+    widget-bound keys mid-run desyncs Streamlit's internal
+    `$$WIDGET_ID-…` mapping and raises a KeyError on the next access.
+    """
+    min_date = df["metadata_originalPostingDate"].min().date()
+    max_date = df["metadata_originalPostingDate"].max().date()
+    st.session_state["date_range"] = (min_date, max_date)
+    st.session_state["categories"] = []
+    st.session_state["seniorities"] = []
+    st.session_state["salary_bands"] = []
+    st.session_state["yoe_range"] = (0, 20)
+    st.session_state["employment_types"] = []
+    st.session_state["exclude_zero_engagement"] = True
+    st.session_state["exclude_mass_hiring"] = True
+    st.session_state["exclude_suspicious_low"] = False
+    st.session_state["employer_type"] = "Both"
 
 
 def render_sidebar_filters(df: pd.DataFrame) -> dict:
@@ -119,9 +135,12 @@ def render_sidebar_filters(df: pd.DataFrame) -> dict:
         )
 
     sb.divider()
-    if sb.button("Reset filters", width="stretch"):
-        _reset_filters(df)
-        st.rerun()
+    sb.button(
+        "Reset filters",
+        width="stretch",
+        on_click=_reset_filters,
+        args=(df,),
+    )
 
     return {k: st.session_state[k] for k in _FILTER_KEYS}
 
