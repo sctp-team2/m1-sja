@@ -15,11 +15,8 @@ from __future__ import annotations
 
 import hashlib
 import io
-import re
 import sys
-import tempfile
 from pathlib import Path
-from urllib.parse import urlparse
 
 import pandas as pd
 import streamlit as st
@@ -27,12 +24,12 @@ import streamlit as st
 # solutions/data/mcf_features.pkl relative to this file
 DATA_PATH = Path(__file__).resolve().parents[2] / "data" / "mcf_features.pkl"
 
-# Sample dataset hosted on Google Drive. Pre-fills the URL input so a
-# fresh clone can fetch the data with one click — the user can edit
-# the URL if they have a different remote source.
-SAMPLE_DATA_URL = (
-    "https://drive.usercontent.google.com/download?"
-    "id=18k_90SR01cQXFFRPLgPGZ3Y3YnDe0r3x&export=download&confirm=t"
+# Public Drive link to the sample feature pkl. Surfaced as a download
+# button in the sidebar so users grab the file locally, then upload it
+# back through the file_uploader. This avoids in-app downloads of
+# ~220 MB and the flakiness of Drive's virus-scan interstitial.
+SAMPLE_DATA_DRIVE_URL = (
+    "https://drive.google.com/file/d/1GXoN9DYIZUt3XlPvLVaG2RQktkn1zKO9/view"
 )
 
 # Allow `from feature_engineering import build_features` when the app
@@ -117,85 +114,6 @@ def _load_upload(content: bytes, name: str) -> pd.DataFrame:
     return _ensure_features(df)
 
 
-def _extract_drive_id(url: str) -> str | None:
-    """Return the Google Drive file ID embedded in a URL, if any.
-
-    Handles the common shareable patterns:
-      - https://drive.google.com/file/d/<ID>/view
-      - https://drive.google.com/uc?id=<ID>
-      - https://drive.usercontent.google.com/download?id=<ID>&...
-    """
-    if "drive.google.com" not in url and "drive.usercontent.google.com" not in url:
-        return None
-    m = re.search(r"/file/d/([A-Za-z0-9_-]{20,})", url)
-    if m:
-        return m.group(1)
-    m = re.search(r"[?&]id=([A-Za-z0-9_-]{20,})", url)
-    return m.group(1) if m else None
-
-
-@st.cache_data(show_spinner="Downloading from Google Drive…", max_entries=2)
-def _download_from_drive(file_id: str) -> tuple[bytes, str]:
-    """Fetch a Google-Drive-hosted file by its ID using `gdown`.
-
-    Handles the virus-scan interstitial Google returns for files >25 MB.
-    Returns (content, original_filename). Cached on `file_id`.
-    """
-    import gdown  # lazy import — large dep, only needed for this code path
-    with tempfile.TemporaryDirectory() as tmpdir:
-        out_dir = str(Path(tmpdir)) + "/"
-        path = gdown.download(id=file_id, output=out_dir, quiet=True)
-        if not path:
-            raise RuntimeError(
-                "Google Drive returned no file. Check the file is shared "
-                "with 'Anyone with the link' and the ID is correct."
-            )
-        path = Path(path)
-        with open(path, "rb") as f:
-            content = f.read()
-        return content, path.name
-
-
-@st.cache_data(show_spinner="Downloading from URL…", max_entries=2)
-def _download_from_url(url: str) -> tuple[bytes, str]:
-    """Generic HTTP fetch with filename detection.
-
-    Filename priority:
-      1. `Content-Disposition` header.
-      2. Path component of the URL (e.g. `.../mcf_features.pkl`).
-      3. Fallback `download.pkl`.
-
-    Returns (content, filename). Cached on `url`.
-    """
-    import requests
-    with requests.get(url, stream=True, timeout=300, allow_redirects=True) as r:
-        r.raise_for_status()
-        if "text/html" in r.headers.get("content-type", "").lower():
-            raise RuntimeError(
-                "URL returned HTML, not a binary file. For Google Drive "
-                "shareable URLs, paste the file ID or use a direct-download "
-                "URL containing `confirm=t`."
-            )
-        content = r.content
-        cd = r.headers.get("content-disposition", "")
-        m = re.search(r'filename\*?=(?:UTF-8\'\')?"?([^";]+)"?', cd)
-        if m:
-            name = m.group(1)
-        else:
-            parsed_name = Path(urlparse(url).path).name
-            name = parsed_name if "." in parsed_name else "download.pkl"
-    return content, name
-
-
-def _fetch_url(url: str) -> tuple[bytes, str]:
-    """Dispatch to the Drive-specific path when the URL looks like Drive,
-    otherwise fall back to a generic HTTP GET."""
-    drive_id = _extract_drive_id(url)
-    if drive_id:
-        return _download_from_drive(drive_id)
-    return _download_from_url(url)
-
-
 def data_source_key() -> str:
     """Short stable token identifying the active data source.
 
@@ -256,49 +174,30 @@ def render_data_source_picker() -> None:
     Place this above `render_sidebar_filters` on every page so changing
     the source refreshes the filters' option lists.
 
-    Three paths to a dataset:
+    Two paths to a dataset:
       1. Bundled `data/mcf_features.pkl` (the default; used when nothing
-         else is loaded).
-      2. URL load — editable text input pre-filled with the sample
-         Google Drive URL; the "Load from URL" button fetches it.
-      3. Local file upload via `st.file_uploader`
-         (.pkl / .csv / .parquet).
+         else is loaded — only present when running locally).
+      2. Download the sample pkl from Google Drive (link below), then
+         upload it back via `st.file_uploader` (.pkl / .csv / .parquet).
     """
     sb = st.sidebar
     sb.markdown("### Data source")
 
-    # ── Option B: load from URL (editable, pre-filled with sample) ──
-    with sb.expander("🌐 Load from URL", expanded=True):
-        url = st.text_input(
-            "Source URL",
-            value=SAMPLE_DATA_URL,
-            key="data_source_url",
-            help=(
-                "Google Drive shareable URLs are auto-detected by file ID. "
-                "Other public URLs are fetched directly. Edit to point at "
-                "your own dataset."
-            ),
-        )
-        if st.button("Load from URL", use_container_width=True, type="primary"):
-            try:
-                content, name = _fetch_url(url)
-                _set_session_upload(content, name)
-                # Clear the local-file uploader so its 'None' on the next
-                # rerun doesn't fight with the URL-installed upload.
-                st.session_state.pop("data_source_uploader", None)
-                st.rerun()
-            except Exception as e:
-                st.error(f"Download failed: {e}")
+    sb.markdown(
+        f"**Step 1.** [⬇️ Download sample dataset]({SAMPLE_DATA_DRIVE_URL}) "
+        "from Google Drive (~220 MB)."
+    )
+    sb.markdown("**Step 2.** Upload the downloaded file below:")
 
-    # ── Option C: upload from local disk ─────────────────────────────
     uploaded = sb.file_uploader(
-        "…or upload locally (.pkl / .csv / .parquet)",
+        "Upload .pkl / .csv / .parquet",
         type=["pkl", "pickle", "csv", "parquet"],
         help=(
             "Raw 21-column files are auto-passed through `build_features`. "
             "Pre-built 67-column feature files are used as-is."
         ),
         key="data_source_uploader",
+        label_visibility="collapsed",
     )
 
     if uploaded is not None:
