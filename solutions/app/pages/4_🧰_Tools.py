@@ -20,7 +20,7 @@ from lib.data_loader import (
 )
 from lib.filters import filter_summary, render_sidebar_filters
 
-st.set_page_config(page_title="Tools · MCF Insights", layout="wide")
+st.set_page_config(page_title="Tools · HR Recruiter Insights", layout="wide")
 
 render_data_source_picker()
 df = load_features()

@@ -1,4 +1,4 @@
-"""MCF Recruiter Insights — landing page.
+"""HR Recruiter Insights — landing page.
 
 Entry point for the Streamlit multi-page app. Streamlit auto-discovers
 the files in `pages/` and renders the sidebar navigation. This module
@@ -21,12 +21,12 @@ from lib.data_loader import (
 from lib.filters import filter_summary, render_sidebar_filters
 
 st.set_page_config(
-    page_title="MCF Recruiter Insights",
+    page_title="HR Recruiter Insights",
     page_icon="📊",
     layout="wide",
 )
 
-st.title("MCF Recruiter Insights")
+st.title("HR Recruiter Insights")
 st.caption(
     "Singapore job-market analytics for HR analysts and recruiters. "
     "Built on MyCareersFuture postings."

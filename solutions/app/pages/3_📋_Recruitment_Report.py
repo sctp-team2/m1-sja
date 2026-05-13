@@ -31,7 +31,7 @@ from lib.data_loader import (
 from lib.filters import filter_summary, render_sidebar_filters
 from lib.suggestions import ACTION_LIST_LABELS, SEVERITY_BADGE, suggest_for_df
 
-st.set_page_config(page_title="Recruitment Report · MCF Insights", layout="wide")
+st.set_page_config(page_title="Recruitment Report · HR Recruiter Insights", layout="wide")
 
 render_data_source_picker()
 df = load_features_or_stop()
@@ -249,7 +249,7 @@ if promising_view.empty:
     st.info("No roles meet the promising criteria in the current filter.")
 else:
     st.dataframe(
-        promising_view, use_container_width=True, hide_index=True,
+        promising_view, width="stretch", hide_index=True,
         column_config={
             "Avg salary": st.column_config.NumberColumn(format="S$%d"),
             "Apps/vacancy": st.column_config.NumberColumn(format="%.2f"),
@@ -344,7 +344,7 @@ else:
     display = medians_masked.map(
         lambda v: f"S${v:,.0f}" if pd.notna(v) else "—"
     )
-    st.dataframe(display, use_container_width=True)
+    st.dataframe(display, width="stretch")
     st.caption("Cells with fewer than 10 postings are shown as '—'.")
 
 st.markdown("---")
@@ -382,7 +382,7 @@ else:
         with st.expander(f"{badge} **{label}**"):
             preview = rows.head(50)[["category_1", "title", "postedCompany_name", "message"]]
             preview.columns = ["Category", "Title", "Company", "Message"]
-            st.dataframe(preview, use_container_width=True, hide_index=True)
+            st.dataframe(preview, width="stretch", hide_index=True)
             if len(rows) > 50:
                 st.caption(f"Showing top 50 of {len(rows):,}. Use exports below for the full list.")
 
@@ -414,7 +414,7 @@ e1, e2, e3 = st.columns(3)
 with e1:
     prepared_for = st.session_state.get("_full_csv_for_sig")
     if prepared_for != SIG:
-        if st.button("📦 Prepare filtered dataset (CSV)", use_container_width=True,
+        if st.button("📦 Prepare filtered dataset (CSV)", width="stretch",
                       help="Encodes the full filtered set (~5–10s on 1M rows). Click only when you want to download."):
             with st.spinner("Encoding CSV…"):
                 _csv_filtered(SIG)  # warms the cache
@@ -425,7 +425,7 @@ with e1:
             "⬇️ Download filtered dataset (CSV)",
             data=_csv_filtered(SIG),
             file_name="mcf_filtered.csv", mime="text/csv",
-            use_container_width=True,
+            width="stretch",
         )
 
 with e2:
@@ -434,12 +434,12 @@ with e2:
         "⬇️ Download promising roles (CSV)",
         data=promising_csv,
         file_name="mcf_promising_roles.csv", mime="text/csv",
-        disabled=len(promising_csv) == 0, use_container_width=True,
+        disabled=len(promising_csv) == 0, width="stretch",
     )
 with e3:
     matrix_csv = _csv_matrix(SIG, yoe_lo, yoe_hi)
     st.download_button(
         "⬇️ Download salary matrix (CSV)",
         data=matrix_csv, file_name="mcf_salary_matrix.csv", mime="text/csv",
-        disabled=len(matrix_csv) == 0, use_container_width=True,
+        disabled=len(matrix_csv) == 0, width="stretch",
     )

@@ -36,7 +36,7 @@ from lib.data_loader import (
 )
 from lib.filters import filter_summary, render_sidebar_filters
 
-st.set_page_config(page_title="Deep Analysis · MCF Insights", layout="wide")
+st.set_page_config(page_title="Deep Analysis · HR Recruiter Insights", layout="wide")
 
 render_data_source_picker()
 df = load_features_or_stop()
@@ -254,7 +254,7 @@ def render_analysis_section(
 def _chart_21(sig: tuple) -> None:
     pivot = _demand_pivot(sig)
     if pivot.empty:
-        st.plotly_chart(empty_chart(), use_container_width=True)
+        st.plotly_chart(empty_chart(), width="stretch")
         return
 
     fig = px.imshow(
@@ -277,7 +277,7 @@ def _chart_21(sig: tuple) -> None:
             tickfont=dict(size=11),
         ),
     )
-    st.plotly_chart(themed(fig), use_container_width=True)
+    st.plotly_chart(themed(fig), width="stretch")
     with st.expander("ℹ️ How to read this chart"):
         st.markdown(
             "**What you're seeing.** Each cell is the **median "
@@ -340,7 +340,7 @@ def _chart_22(sig: tuple) -> None:
         return
     st.dataframe(
         table,
-        use_container_width=True, hide_index=True,
+        width="stretch", hide_index=True,
         column_config={
             "Hard-to-fill": st.column_config.ProgressColumn(
                 "Hard-to-fill",
@@ -408,7 +408,7 @@ render_analysis_section(
 def _chart_23(sig: tuple) -> None:
     sub = _salary_top_cats(sig)
     if sub.empty:
-        st.plotly_chart(empty_chart(), use_container_width=True)
+        st.plotly_chart(empty_chart(), width="stretch")
         return
     fig = px.box(
         sub, x="category_1", y="average_salary",
@@ -417,7 +417,7 @@ def _chart_23(sig: tuple) -> None:
         points=False,
     )
     fig.update_layout(xaxis_tickangle=-30, height=440)
-    st.plotly_chart(themed(fig), use_container_width=True)
+    st.plotly_chart(themed(fig), width="stretch")
     with st.expander("ℹ️ How to read this chart"):
         st.markdown(
             "**What you're seeing.** One box per category (top 12 by "
@@ -479,7 +479,7 @@ st.info(
 def _chart_24(sig: tuple) -> None:
     points = _scatter_sample(sig)
     if points.empty:
-        st.plotly_chart(empty_chart(), use_container_width=True)
+        st.plotly_chart(empty_chart(), width="stretch")
         return
     full_n = len(get_filtered_df(sig))
     fig = px.scatter(
@@ -503,7 +503,7 @@ def _chart_24(sig: tuple) -> None:
             tickformat=".2f",
         ),
     )
-    st.plotly_chart(themed(fig), use_container_width=True)
+    st.plotly_chart(themed(fig), width="stretch")
     if full_n > 5000:
         st.caption(f"Sampled 5,000 of {full_n:,} rows for chart performance.")
     with st.expander("ℹ️ How to read this chart"):
@@ -562,7 +562,7 @@ def _chart_25(sig: tuple) -> None:
         st.info("No hidden gems in the current filter.")
         return
     st.dataframe(
-        table, use_container_width=True, hide_index=True,
+        table, width="stretch", hide_index=True,
         column_config={
             "Conv. rate": st.column_config.NumberColumn(format="%.3f"),
         },
@@ -652,7 +652,7 @@ def _chart_26(sig: tuple) -> None:
         )
 
     fig.update_layout(height=540, barmode="group")
-    st.plotly_chart(themed(fig), use_container_width=True)
+    st.plotly_chart(themed(fig), width="stretch")
     with st.expander("ℹ️ How to read this chart"):
         st.markdown(
             "**What you're seeing.** Four side-by-side comparisons of "

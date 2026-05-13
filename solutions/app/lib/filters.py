@@ -119,7 +119,7 @@ def render_sidebar_filters(df: pd.DataFrame) -> dict:
         )
 
     sb.divider()
-    if sb.button("Reset filters", use_container_width=True):
+    if sb.button("Reset filters", width="stretch"):
         _reset_filters(df)
         st.rerun()
 

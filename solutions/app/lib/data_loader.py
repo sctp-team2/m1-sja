@@ -212,7 +212,7 @@ def render_data_source_picker() -> None:
                 f"Using **{active['name']}** — {len(df):,} rows × {df.shape[1]} cols",
                 icon="📂",
             )
-            if sb.button("Revert to bundled file", use_container_width=True):
+            if sb.button("Revert to bundled file", width="stretch"):
                 st.session_state.pop("uploaded_file", None)
                 st.session_state.pop("data_source_uploader", None)
                 st.rerun()
