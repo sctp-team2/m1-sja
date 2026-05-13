@@ -22,6 +22,11 @@ import duckdb
 import pandas as pd
 import streamlit as st
 
+try:
+    import psutil  # optional; observability degrades gracefully if absent
+except ImportError:
+    psutil = None  # type: ignore
+
 # Pandas-mode disk-size threshold for the "consider DuckDB" warning.
 _PANDAS_MODE_WARN_BYTES = 500 * 1024 * 1024  # 500 MB per upgrade-v2.md spec
 
@@ -197,35 +202,135 @@ def engine_badge() -> str:
     return "DuckDB" if st.session_state.get("use_duckdb", False) else "pandas"
 
 
-def render_data_status() -> None:
-    """Diagnostics block for the Setup page main panel.
+def _human_bytes(n: float | int | None) -> str:
+    """Compact byte formatter: 226 MB, 1.2 GB, etc."""
+    if n is None:
+        return "—"
+    n = float(n)
+    for unit in ("B", "KB", "MB", "GB", "TB"):
+        if n < 1024 or unit == "TB":
+            return f"{n:.0f} {unit}" if unit == "B" else f"{n:.1f} {unit}"
+        n /= 1024
+    return f"{n:.1f} TB"
 
-    Surfaces the three orthogonal pieces of state a user might wonder
-    about: which source file is active, whether the pandas frame is
-    loaded into the @st.cache_data store, and whether the DuckDB
-    connection is live with a registered view. Architecturally the pkl
-    is always read into pandas first; DuckDB sees a zero-copy view of
-    that same frame (current bridge build).
+
+@st.cache_data(show_spinner=False)
+def _frame_deep_memory(sig_for_source: str) -> int:
+    """deep=True memory of the active frame; cached by data source key
+    so swapping uploads invalidates without re-walking the same frame."""
+    df = load_features()
+    return int(df.memory_usage(deep=True).sum())
+
+
+def _duckdb_total_memory(con: duckdb.DuckDBPyConnection) -> int | None:
+    """Sum of bytes across all DuckDB subsystems for this connection.
+
+    Returns None when the duckdb_memory() function isn't available or
+    fails (older versions, edge runtimes)."""
+    try:
+        row = con.execute(
+            "SELECT COALESCE(sum(memory_usage_bytes), 0) FROM duckdb_memory()"
+        ).fetchone()
+        return int(row[0]) if row else None
+    except Exception:
+        return None
+
+
+def render_data_status() -> None:
+    """Setup-page observability block.
+
+    Surfaces source, memory (DataFrame / Streamlit process / system),
+    pipeline state (in-memory frame, dtype mix, date range), DuckDB
+    connection state, and environment versions. Architecturally the
+    pkl is always read into pandas first; DuckDB sees a zero-copy view
+    of that same frame (current bridge build).
     """
     with st.expander("Data status", expanded=True):
-        # Source
+        # ── Source ───────────────────────────────────────────────────
         upload = st.session_state.get("uploaded_file")
-        size = _active_source_size_bytes()
-        size_str = f"{size / (1024**2):.0f} MB" if size else "unknown size"
+        src_bytes = _active_source_size_bytes()
+        src_size_str = _human_bytes(src_bytes)
         if upload is not None:
-            st.markdown(f"**Source:** upload `{upload['name']}` · {size_str}")
+            st.markdown(f"**Source:** upload `{upload['name']}` · {src_size_str}")
         else:
-            st.markdown(f"**Source:** bundled `{DATA_PATH.name}` · {size_str}")
+            st.markdown(f"**Source:** bundled `{DATA_PATH.name}` · {src_size_str}")
 
-        # Pandas frame state — every page calls load_features() before
-        # this widget renders, so by now the frame is hot in cache.
+        # ── Memory metrics (the four the operator most often needs) ──
+        st.markdown("**Memory**")
+        try:
+            df_bytes = _frame_deep_memory(data_source_key())
+        except Exception:
+            df_bytes = None
+
+        proc_rss = None
+        sys_total = None
+        sys_avail = None
+        sys_pct = None
+        if psutil is not None:
+            try:
+                proc_rss = psutil.Process().memory_info().rss
+                vm = psutil.virtual_memory()
+                sys_total, sys_avail, sys_pct = vm.total, vm.available, vm.percent
+            except Exception:
+                pass
+
+        duck_mem = None
+        if st.session_state.get("use_duckdb", False):
+            duck_mem = _duckdb_total_memory(get_duckdb_con())
+
+        m1, m2, m3, m4 = st.columns(4)
+        m1.metric(
+            "Uploaded file",
+            _human_bytes(src_bytes),
+            delta=("upload" if upload is not None else "bundled"),
+            delta_color="off",
+        )
+        m2.metric("DataFrame (in-memory)", _human_bytes(df_bytes))
+        m3.metric(
+            "DuckDB engine",
+            _human_bytes(duck_mem) if duck_mem is not None else "—",
+            delta=(None if st.session_state.get("use_duckdb", False) else "mode off"),
+            delta_color="off",
+        )
+        m4.metric(
+            "Total system RAM",
+            _human_bytes(sys_total),
+            delta=(
+                f"{_human_bytes(sys_avail)} free · {sys_pct:.0f}% used"
+                if sys_pct is not None else None
+            ),
+            delta_color="off",
+        )
+        st.caption(
+            f"This Streamlit process RSS: **{_human_bytes(proc_rss)}**"
+            + ("" if psutil is not None else " · install `psutil` for process/system memory")
+        )
+
+        # ── Pipeline ─────────────────────────────────────────────────
+        st.markdown("**Pipeline**")
         try:
             df = load_features()
-            st.markdown(f"**In-memory frame:** loaded · {len(df):,} × {df.shape[1]}")
+            dtype_counts = df.dtypes.astype(str).value_counts()
+            dtype_str = " · ".join(f"{n} {dt}" for dt, n in dtype_counts.items())
+            date_col = "metadata_originalPostingDate"
+            date_range_str = ""
+            if date_col in df.columns and len(df):
+                d_lo = df[date_col].min()
+                d_hi = df[date_col].max()
+                date_range_str = (
+                    f" · dates {pd.Timestamp(d_lo).date()} → "
+                    f"{pd.Timestamp(d_hi).date()}"
+                )
+            st.markdown(
+                f"In-memory frame: **loaded** · {len(df):,} × {df.shape[1]}"
+                f"{date_range_str}"
+            )
+            st.caption(f"Dtypes: {dtype_str}")
         except Exception:
-            st.markdown("**In-memory frame:** not loaded yet")
+            st.markdown("In-memory frame: **not loaded yet**")
 
-        # DuckDB connection / view state. Only meaningful in DuckDB mode.
+        # ── DuckDB ───────────────────────────────────────────────────
+        st.markdown("**DuckDB**")
         if st.session_state.get("use_duckdb", False):
             con = get_duckdb_con()
             view_row = con.execute(
@@ -235,16 +340,25 @@ def render_data_status() -> None:
             if view_bound:
                 row_count = con.execute("SELECT count(*) FROM features").fetchone()[0]
                 st.markdown(
-                    f"**DuckDB:** connection live · view `features` bound · "
-                    f"{row_count:,} rows visible"
+                    f"Connection live · view `features` bound · "
+                    f"**{row_count:,}** rows visible"
                 )
             else:
                 st.markdown(
-                    "**DuckDB:** connection live · view `features` not yet "
-                    "registered (no query has run in this mode)"
+                    "Connection live · view `features` not yet registered "
+                    "(no query has run in this mode)"
                 )
         else:
-            st.markdown("**DuckDB:** idle (toggle off — pandas filters in use)")
+            st.markdown("Idle (toggle off — pandas filters in use).")
+
+        # ── Environment ──────────────────────────────────────────────
+        import numpy as _np
+        st.markdown("**Environment**")
+        st.caption(
+            f"streamlit {st.__version__} · duckdb {duckdb.__version__} · "
+            f"pandas {pd.__version__} · numpy {_np.__version__}"
+            + (f" · psutil {psutil.__version__}" if psutil is not None else "")
+        )
 
         st.caption(
             "Architecture: pkl → pandas (cached) → either pandas mask "
