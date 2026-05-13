@@ -1,0 +1,28 @@
+# macOS
+.DS_Store
+
+# Python cache / build artifacts
+__pycache__/
+*.py[cod]
+*$py.class
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.ipynb_checkpoints/
+
+# Virtual envs
+.venv/
+venv/
+env/
+
+# Large data / model artifacts
+*.csv
+*.pkl
+*.parquet
+*.duckdb
+*.h5
+*.feather
+*.npz
+*.npy
+
+# Allow small text CSVs to be force-added with `git add -f` if needed.
